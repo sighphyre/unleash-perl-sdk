@@ -178,6 +178,7 @@ my $sdk = Srv::SDK->new(
     api_key     => $api_key,
     app_name    => 'unleash-perl-app-test',
     instance_id => '11111111-1111-4111-8111-111111111111',
+    supported_strategies => [qw/default gradualRolloutUserId/],
     ua          => $ua,
     engine      => $engine,
 );
@@ -250,6 +251,54 @@ ok(!defined $disabled_timers->{send_metrics}, 'send_metrics scheduler not create
 $disabled_polling_sdk->shutdown();
 pass('shutdown is safe when polls are disabled');
 
+$sdk->_register_client_once();
+is(scalar @{ $ua->{post_calls} }, 1, 'register posts once');
+is(
+    $ua->{post_calls}[0]{url},
+    ($unleash_url =~ s{/$}{}r) . '/client/register',
+    'register uses /client/register endpoint',
+);
+is(
+    $ua->{post_calls}[0]{headers}{Authorization},
+    $api_key,
+    'register passes api_key as Authorization header',
+);
+is(
+    $ua->{post_calls}[0]{payload}{appName},
+    'unleash-perl-app-test',
+    'register payload includes appName',
+);
+is(
+    $ua->{post_calls}[0]{payload}{instanceId},
+    '11111111-1111-4111-8111-111111111111',
+    'register payload includes instanceId',
+);
+like(
+    $ua->{post_calls}[0]{payload}{connectionId},
+    qr/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i,
+    'register payload includes generated connectionId UUID',
+);
+is_deeply(
+    $ua->{post_calls}[0]{payload}{strategies},
+    [qw/default gradualRolloutUserId/],
+    'register payload includes supported strategies',
+);
+is(
+    $ua->{post_calls}[0]{payload}{interval},
+    15,
+    'register payload interval matches send metrics interval',
+);
+like(
+    $ua->{post_calls}[0]{payload}{sdkVersion},
+    qr/\Aunleash-perl-sdk:/,
+    'register payload includes sdkVersion',
+);
+like(
+    $ua->{post_calls}[0]{payload}{started},
+    qr/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/,
+    'register payload includes UTC started timestamp',
+);
+
 $sdk->_fetch_features_once();
 $sdk->_fetch_features_once();
 is(scalar @{ $ua->{get_calls} }, 2, 'fetch_features performs GET requests');
@@ -284,39 +333,39 @@ is(
 );
 
 $sdk->_send_metrics_once();
-is(scalar @{ $ua->{post_calls} }, 1, 'send_metrics posts when metrics bucket has data');
+is(scalar @{ $ua->{post_calls} }, 2, 'send_metrics posts when metrics bucket has data');
 is(
-    $ua->{post_calls}[0]{url},
+    $ua->{post_calls}[1]{url},
     ($unleash_url =~ s{/$}{}r) . '/client/metrics',
     'send_metrics uses /client/metrics endpoint',
 );
 is(
-    $ua->{post_calls}[0]{headers}{Authorization},
+    $ua->{post_calls}[1]{headers}{Authorization},
     $api_key,
     'send_metrics passes api_key as Authorization header',
 );
 is(
-    $ua->{post_calls}[0]{payload}{appName},
+    $ua->{post_calls}[1]{payload}{appName},
     'unleash-perl-app-test',
     'send_metrics payload includes appName',
 );
 is(
-    $ua->{post_calls}[0]{payload}{instanceId},
+    $ua->{post_calls}[1]{payload}{instanceId},
     '11111111-1111-4111-8111-111111111111',
     'send_metrics payload includes provided instanceId',
 );
 like(
-    $ua->{post_calls}[0]{payload}{connectionId},
+    $ua->{post_calls}[1]{payload}{connectionId},
     qr/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i,
     'send_metrics payload includes internal connectionId UUID',
 );
 is_deeply(
-    $ua->{post_calls}[0]{payload}{bucket},
+    $ua->{post_calls}[1]{payload}{bucket},
     { toggles => { demo_toggle => { yes => 1, no => 0 } } },
     'send_metrics payload includes get_metrics bucket',
 );
 
 $sdk->_send_metrics_once();
-is(scalar @{ $ua->{post_calls} }, 1, 'send_metrics skips POST when metrics bucket is empty');
+is(scalar @{ $ua->{post_calls} }, 2, 'send_metrics skips POST when metrics bucket is empty');
 
 done_testing();

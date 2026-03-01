@@ -4,9 +4,11 @@ use strict;
 use warnings;
 use File::Basename qw(dirname);
 use File::Spec;
+use POSIX qw(strftime);
 use Srv::Scheduler;
 
 our $VERSION = '0.01';
+our $SDK_NAME = 'unleash-perl-sdk';
 
 BEGIN {
     if (!eval { require Yggdrasil::Engine; 1 }) {
@@ -45,6 +47,13 @@ sub new {
     $app_name = 'unleash-perl-app' if !defined $app_name || $app_name eq q{};
     my $instance_id = $args{instance_id};
     $instance_id = _generate_uuid() if !defined $instance_id || $instance_id eq q{};
+    my $supported_strategies = $args{supported_strategies};
+    $supported_strategies = [] if !defined $supported_strategies;
+    if (ref($supported_strategies) eq 'HASH') {
+        $supported_strategies = [ sort keys %{$supported_strategies} ];
+    }
+    die 'supported_strategies must be an arrayref or hashref'
+        if ref($supported_strategies) ne 'ARRAY';
 
     require Mojo::UserAgent;
 
@@ -58,14 +67,17 @@ sub new {
         app_name                 => $app_name,
         instance_id              => $instance_id,
         connection_id            => _generate_uuid(),
+        supported_strategies     => $supported_strategies,
         features_url             => _build_features_url($unleash_url),
         metrics_url              => _build_metrics_url($unleash_url),
+        register_url             => _build_register_url($unleash_url),
         ua                       => $args{ua} || Mojo::UserAgent->new(),
         etag                     => undef,
         fetch_features_scheduler => undef,
         send_metrics_scheduler   => undef,
         _fetch_in_flight         => 0,
         _metrics_in_flight       => 0,
+        _register_in_flight      => 0,
         poller_running           => 0,
     }, $class;
 
@@ -109,6 +121,7 @@ sub initialize {
     my ($self) = @_;
 
     return if $self->{poller_running};
+    require Mojo::IOLoop;
 
     my $fetch_timer_id;
     my $metrics_timer_id;
@@ -120,6 +133,7 @@ sub initialize {
     if ($self->{send_metrics_scheduler}) {
         $metrics_timer_id = $self->{send_metrics_scheduler}->start();
     }
+    Mojo::IOLoop->next_tick(sub { $self->_register_client_once() });
 
     $self->{poller_running} = 1;
     return {
@@ -139,6 +153,7 @@ sub shutdown {
     $self->{poller_running}   = 0;
     $self->{_fetch_in_flight} = 0;
     $self->{_metrics_in_flight} = 0;
+    $self->{_register_in_flight} = 0;
 
     return;
 }
@@ -263,6 +278,57 @@ sub _send_metrics_once {
     return;
 }
 
+sub _register_client_once {
+    my ($self) = @_;
+
+    return if $self->{_register_in_flight};
+    $self->{_register_in_flight} = 1;
+
+    my $request = {
+        appName        => $self->{app_name},
+        instanceId     => $self->{instance_id},
+        connectionId   => $self->{connection_id},
+        sdkVersion     => $SDK_NAME . ':' . $VERSION,
+        strategies     => $self->{supported_strategies},
+        started        => _utc_now_iso8601(),
+        interval       => $self->{send_metrics_interval},
+        platformName   => 'perl',
+        platformVersion => $],
+    };
+
+    eval {
+        $self->{ua}->post(
+            $self->{register_url} => {
+                Authorization => $self->{api_key},
+                'Content-Type' => 'application/json',
+            } => json => $request => sub {
+                my ($ua, $tx) = @_;
+                eval {
+                    my $result = $tx->result;
+                    my $status = $result->code || 'unknown';
+                    if ($status != 200 && $status != 202) {
+                        warn "register request failed with status $status\n";
+                    }
+                    1;
+                } or do {
+                    my $err = $@ || 'unknown error';
+                    warn "register request failed: $err";
+                };
+
+                $self->{_register_in_flight} = 0;
+                return;
+            }
+        );
+        1;
+    } or do {
+        my $err = $@ || 'unknown error';
+        warn "register request failed: $err";
+        $self->{_register_in_flight} = 0;
+    };
+
+    return;
+}
+
 sub _has_metrics_data {
     my ($value) = @_;
 
@@ -281,6 +347,17 @@ sub _build_metrics_url {
 
     $unleash_url =~ s{/$}{};
     return $unleash_url . '/client/metrics';
+}
+
+sub _build_register_url {
+    my ($unleash_url) = @_;
+
+    $unleash_url =~ s{/$}{};
+    return $unleash_url . '/client/register';
+}
+
+sub _utc_now_iso8601 {
+    return strftime('%Y-%m-%dT%H:%M:%SZ', gmtime());
 }
 
 sub _generate_uuid {
