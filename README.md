@@ -9,6 +9,7 @@ Library-first Perl scaffold.
 - `bin/variant_usage.pl`: minimal `get_variant` example
 - `bin/custom_strategy_usage.pl`: custom strategy registration example
 - `bin/ready_usage.pl`: wait for `ready` event before evaluating flags
+- `bin/impression_usage.pl`: subscribe to `impression` events
 - `t/basic.t`: basic module test
 
 ## Run Examples
@@ -27,6 +28,10 @@ Library-first Perl scaffold.
 
 ```sh
 ./bin/ready_usage.pl
+```
+
+```sh
+./bin/impression_usage.pl
 ```
 
 ## Run Tests
