@@ -33,7 +33,7 @@ $sdk->initialize();
 
 Mojo::IOLoop->recurring(
     $eval_interval => sub {
-        my $enabled = $sdk->is_enabled($toggle_name, {}, sub { 0 });
+        my $enabled = $sdk->is_enabled($toggle_name, { userId => 1 }, sub { 0 });
         print "is_enabled($toggle_name) = ", ($enabled ? 'true' : 'false'), "\n";
     }
 );
