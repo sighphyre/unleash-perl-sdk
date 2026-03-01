@@ -64,6 +64,10 @@ sub new {
     my $bootstrap_function = $args{bootstrap_function};
     die 'bootstrap_function must be a coderef'
         if defined $bootstrap_function && ref($bootstrap_function) ne 'CODE';
+    my $custom_strategies = $args{custom_strategies};
+    $custom_strategies = {} if !defined $custom_strategies;
+    die 'custom_strategies must be a hash reference'
+        if ref($custom_strategies) ne 'HASH';
 
     require Mojo::UserAgent;
 
@@ -80,6 +84,7 @@ sub new {
         state_backup_dir         => $state_backup_dir,
         state_backup_file        => _build_state_backup_file($state_backup_dir, $app_name),
         bootstrap_function       => $bootstrap_function,
+        custom_strategies        => $custom_strategies,
         supported_strategies     => $supported_strategies,
         features_url             => _build_features_url($unleash_url),
         metrics_url              => _build_metrics_url($unleash_url),
@@ -102,6 +107,7 @@ sub new {
     $self->{fetch_features_task} = Srv::SDK::FetchFeatures->new(sdk => $self);
     $self->{send_metrics_task} = Srv::SDK::SendMetrics->new(sdk => $self);
     $self->{register_task} = Srv::SDK::Register->new(sdk => $self);
+    $self->{engine}->register_custom_strategies($self->{custom_strategies});
 
     if ($self->{fetch_features_interval} > 0) {
         $self->{fetch_features_scheduler} = Srv::Scheduler->new(

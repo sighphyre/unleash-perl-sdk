@@ -130,6 +130,7 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
             variant_values   => $args{variant_values} || [],
             count_calls      => [],
             count_variant_calls => [],
+            registered_custom_strategies => [],
         }, $class;
     }
     sub is_enabled {
@@ -163,6 +164,11 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
             toggle_name  => $toggle_name,
             variant_name => $variant_name,
         };
+        return;
+    }
+    sub register_custom_strategies {
+        my ($self, $strategies) = @_;
+        push @{ $self->{registered_custom_strategies} }, $strategies;
         return;
     }
 }
@@ -287,6 +293,56 @@ is($engine_counting->{count_calls}[0]{toggle_name}, 'flag_on', 'count_toggle cal
 is($engine_counting->{count_calls}[0]{enabled}, 1, 'count_toggle enabled=1 for true result');
 is($engine_counting->{count_calls}[1]{toggle_name}, 'flag_off', 'count_toggle called with second toggle name');
 is($engine_counting->{count_calls}[1]{enabled}, 0, 'count_toggle enabled=0 for false result');
+
+my $cat_strategy = sub {
+    my ($parameters, $context) = @_;
+    return 0 if ref($parameters) ne 'HASH' || ref($context) ne 'HASH';
+    return ($context->{sound} || q{}) eq ($parameters->{sound} || q{}) ? 1 : 0;
+};
+my $engine_custom = TestEngine->new();
+my $sdk_custom = Srv::SDK->new(
+    unleash_url       => $unleash_url,
+    api_key           => $api_key,
+    app_name          => 'custom-strategy-test-app',
+    state_backup_dir  => $backup_dir,
+    custom_strategies => {
+        amIACat => $cat_strategy,
+    },
+    ua                => TestUA->new(
+        get_responses => [
+            { status => 304, body => q{}, etag => undef },
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine            => $engine_custom,
+);
+is(
+    scalar @{ $engine_custom->{registered_custom_strategies} },
+    1,
+    'constructor registers custom strategies on engine',
+);
+ok(
+    exists $engine_custom->{registered_custom_strategies}[0]{amIACat},
+    'registered custom strategy includes expected key',
+);
+is(
+    ref($engine_custom->{registered_custom_strategies}[0]{amIACat}),
+    'CODE',
+    'registered custom strategy value is preserved',
+);
+eval {
+    Srv::SDK->new(
+        unleash_url       => $unleash_url,
+        api_key           => $api_key,
+        custom_strategies => ['invalid'],
+        ua                => TestUA->new(),
+        engine            => TestEngine->new(),
+    );
+    1;
+};
+like($@, qr/custom_strategies must be a hash reference/, 'invalid custom_strategies input is rejected');
 
 my $engine_variant = TestEngine->new(
     variant_values => [
