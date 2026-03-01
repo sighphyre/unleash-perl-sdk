@@ -9,6 +9,7 @@ use POSIX qw(strftime);
 use Mojo::Promise;
 use Mojo::IOLoop;
 use Srv::Scheduler;
+use Srv::SDK::Events;
 use Srv::SDK::FetchFeatures;
 use Srv::SDK::SendMetrics;
 use Srv::SDK::Register;
@@ -485,44 +486,17 @@ sub _handle_successful_fetch_state {
 
 sub _emit_ready_once {
     my ($self) = @_;
-    return if $self->{_ready_emitted};
-    $self->{_ready_emitted} = 1;
-    $self->emit('ready');
-    return;
+    return Srv::SDK::Events::emit_ready_once($self);
 }
 
 sub _emit_error {
     my ($self, $message) = @_;
-    $message = 'unknown fetch error' if !defined $message || $message eq q{};
-    warn "$message\n";
-    $self->emit('error', $message) if $self->can('has_subscribers') && $self->has_subscribers('error');
-    return;
+    return Srv::SDK::Events::emit_error($self, $message);
 }
 
 sub _emit_impression_event {
     my ($self, %args) = @_;
-
-    my $feature_name = $args{feature_name};
-    return if !defined $feature_name || $feature_name eq q{};
-
-    my $should_emit = 0;
-    eval {
-        $should_emit = $self->{engine}->should_emit_impression_event($feature_name) ? 1 : 0;
-        1;
-    } or do {
-        return;
-    };
-    return if !$should_emit;
-
-    my %event = (
-        featureName => $feature_name,
-        context     => $args{context} || {},
-        enabled     => $args{enabled} ? 1 : 0,
-    );
-    $event{variant} = $args{variant} if defined $args{variant};
-
-    $self->emit('impression', \%event);
-    return;
+    return Srv::SDK::Events::emit_impression_event($self, %args);
 }
 
 sub _is_enabled_raw {
