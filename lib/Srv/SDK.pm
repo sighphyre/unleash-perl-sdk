@@ -59,6 +59,9 @@ sub new {
     }
     die 'supported_strategies must be an arrayref or hashref'
         if ref($supported_strategies) ne 'ARRAY';
+    my $bootstrap_function = $args{bootstrap_function};
+    die 'bootstrap_function must be a coderef'
+        if defined $bootstrap_function && ref($bootstrap_function) ne 'CODE';
 
     require Mojo::UserAgent;
 
@@ -74,6 +77,7 @@ sub new {
         connection_id            => _generate_uuid(),
         state_backup_dir         => $state_backup_dir,
         state_backup_file        => _build_state_backup_file($state_backup_dir, $app_name),
+        bootstrap_function       => $bootstrap_function,
         supported_strategies     => $supported_strategies,
         features_url             => _build_features_url($unleash_url),
         metrics_url              => _build_metrics_url($unleash_url),
@@ -96,6 +100,7 @@ sub new {
     $self->{register_task} = Srv::SDK::Register->new(sdk => $self);
 
     $self->_hydrate_state_from_backup();
+    $self->_hydrate_state_from_bootstrap();
 
     if ($self->{fetch_features_interval} > 0) {
         $self->{fetch_features_scheduler} = Srv::Scheduler->new(
@@ -264,6 +269,34 @@ sub _hydrate_state_from_backup {
     } or do {
         my $err = $@ || 'unknown error';
         warn "failed to hydrate state from backup file $path: $err";
+    };
+
+    return;
+}
+
+sub _hydrate_state_from_bootstrap {
+    my ($self) = @_;
+
+    return if !defined $self->{bootstrap_function};
+
+    my $state_json;
+    eval {
+        $state_json = $self->{bootstrap_function}->();
+        1;
+    } or do {
+        my $err = $@ || 'unknown error';
+        warn "failed to get bootstrap state: $err";
+        return;
+    };
+
+    return if !defined $state_json || $state_json eq q{};
+
+    eval {
+        $self->{engine}->take_state("$state_json");
+        1;
+    } or do {
+        my $err = $@ || 'unknown error';
+        warn "failed to hydrate state from bootstrap function: $err";
     };
 
     return;

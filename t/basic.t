@@ -187,18 +187,26 @@ my $sdk_hydrated = Srv::SDK->new(
     api_key          => $api_key,
     app_name         => 'startup-hydrate-app',
     state_backup_dir => $backup_dir,
+    bootstrap_function => sub {
+        return '{"version":2,"features":[{"name":"bootstrapped"}],"segments":[]}';
+    },
     ua               => $ua,
     engine           => $engine_hydrated,
 );
 is(
     scalar @{ $engine_hydrated->{take_state_calls} },
-    1,
-    'constructor hydrates engine from existing backup file',
+    2,
+    'constructor hydrates from backup and bootstrap function',
 );
 is(
     $engine_hydrated->{take_state_calls}[0],
     '{"version":2,"features":[{"name":"seeded"}],"segments":[]}',
-    'hydration passes backup JSON to take_state',
+    'backup hydration runs first',
+);
+is(
+    $engine_hydrated->{take_state_calls}[1],
+    '{"version":2,"features":[{"name":"bootstrapped"}],"segments":[]}',
+    'bootstrap hydration runs after backup',
 );
 
 my $sdk = Srv::SDK->new(
