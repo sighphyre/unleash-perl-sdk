@@ -176,6 +176,31 @@ my $engine = TestEngine->new(
         undef,
     ],
 );
+my $hydrated_backup_file = File::Spec->catfile($backup_dir, 'startup-hydrate-app-perl-sdk.json');
+open my $hydrated_fh, '>', $hydrated_backup_file or die "failed to seed hydration file: $!";
+print {$hydrated_fh} '{"version":2,"features":[{"name":"seeded"}],"segments":[]}';
+close $hydrated_fh;
+
+my $engine_hydrated = TestEngine->new();
+my $sdk_hydrated = Srv::SDK->new(
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'startup-hydrate-app',
+    state_backup_dir => $backup_dir,
+    ua               => $ua,
+    engine           => $engine_hydrated,
+);
+is(
+    scalar @{ $engine_hydrated->{take_state_calls} },
+    1,
+    'constructor hydrates engine from existing backup file',
+);
+is(
+    $engine_hydrated->{take_state_calls}[0],
+    '{"version":2,"features":[{"name":"seeded"}],"segments":[]}',
+    'hydration passes backup JSON to take_state',
+);
+
 my $sdk = Srv::SDK->new(
     unleash_url => $unleash_url,
     api_key     => $api_key,
@@ -213,10 +238,12 @@ my $engine_counting = TestEngine->new(
     enabled_values => [1, 0],
 );
 my $sdk_counting = Srv::SDK->new(
-    unleash_url => $unleash_url,
-    api_key     => $api_key,
-    ua          => $ua,
-    engine      => $engine_counting,
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'counting-test-app',
+    state_backup_dir => $backup_dir,
+    ua               => $ua,
+    engine           => $engine_counting,
 );
 is($sdk_counting->is_enabled('flag_on', {}, sub { 0 }), 1, 'returns true when engine returns true');
 is($sdk_counting->is_enabled('flag_off', {}, sub { 1 }), 0, 'returns false when engine returns false');
@@ -230,6 +257,8 @@ my $polling_sdk = Srv::SDK->new(
     polling_interval => 1,
     unleash_url      => $unleash_url . '/',
     api_key          => $api_key,
+    app_name         => 'polling-test-app',
+    state_backup_dir => $backup_dir,
     ua               => $ua,
     engine           => $engine,
 );
@@ -245,6 +274,8 @@ my $disabled_polling_sdk = Srv::SDK->new(
     send_metrics_interval   => 0,
     unleash_url             => $unleash_url,
     api_key                 => $api_key,
+    app_name                => 'disabled-polling-test-app',
+    state_backup_dir        => $backup_dir,
     ua                      => $ua,
     engine                  => $engine,
 );
@@ -335,7 +366,7 @@ is(
     '{"version":2,"features":[],"segments":[]}',
     'fetch_features passes response body string to take_state',
 );
-my $backup_file = File::Spec->catfile($backup_dir, 'unleash-perl-app-test_perl_sdk.json');
+my $backup_file = File::Spec->catfile($backup_dir, 'unleash-perl-app-test-perl-sdk.json');
 ok(-f $backup_file, 'fetch_features writes state backup file');
 open my $backup_fh, '<', $backup_file or die "failed to read backup file: $!";
 my $backup_content = do { local $/; <$backup_fh> };

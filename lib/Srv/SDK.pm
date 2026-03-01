@@ -85,6 +85,8 @@ sub new {
         poller_running           => 0,
     }, $class;
 
+    $self->_hydrate_state_from_backup();
+
     if ($self->{fetch_features_interval} > 0) {
         $self->{fetch_features_scheduler} = Srv::Scheduler->new(
             name     => 'fetch_features',
@@ -391,6 +393,33 @@ sub _backup_state_json {
 
     print {$fh} $state_json;
     close $fh;
+    return;
+}
+
+sub _hydrate_state_from_backup {
+    my ($self) = @_;
+
+    my $path = $self->{state_backup_file};
+    return if !-f $path;
+
+    my $fh;
+    if (!open $fh, '<', $path) {
+        warn "failed to read state backup file $path: $!\n";
+        return;
+    }
+
+    my $state_json = do { local $/; <$fh> };
+    close $fh;
+    return if !defined $state_json || $state_json eq q{};
+
+    eval {
+        $self->{engine}->take_state("$state_json");
+        1;
+    } or do {
+        my $err = $@ || 'unknown error';
+        warn "failed to hydrate state from backup file $path: $err";
+    };
+
     return;
 }
 
