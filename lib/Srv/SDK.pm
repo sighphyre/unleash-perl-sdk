@@ -10,6 +10,9 @@ use Mojo::Promise;
 use Mojo::IOLoop;
 use Srv::Scheduler;
 use Srv::SDK::Events;
+use Srv::SDK::Bootstrap;
+use Srv::SDK::StateBackup;
+use Srv::SDK::StartupHydration;
 use Srv::SDK::FetchFeatures;
 use Srv::SDK::SendMetrics;
 use Srv::SDK::Register;
@@ -315,144 +318,27 @@ sub _utc_now_iso8601 {
 
 sub _build_state_backup_file {
     my ($dir, $app_name) = @_;
-    my $safe_app_name = $app_name;
-    $safe_app_name =~ s{[^A-Za-z0-9._-]}{_}g;
-    return File::Spec->catfile($dir, $safe_app_name . '-perl-sdk.json');
+    return Srv::SDK::StateBackup::build_state_backup_file($dir, $app_name);
 }
 
 sub _backup_state_json {
     my ($self, $state_json) = @_;
-
-    my $path = $self->{state_backup_file};
-    my $dir = $self->{state_backup_dir};
-
-    if (!-d $dir) {
-        warn "state backup directory does not exist: $dir\n";
-        return;
-    }
-
-    my $fh;
-    if (!open $fh, '>', $path) {
-        warn "failed to write state backup file $path: $!\n";
-        return;
-    }
-
-    print {$fh} $state_json;
-    close $fh;
-    return;
+    return Srv::SDK::StateBackup::backup_state_json($self, $state_json);
 }
 
 sub _read_state_from_backup {
     my ($self) = @_;
-
-    my $path = $self->{state_backup_file};
-    return undef if !-f $path;
-
-    my $fh;
-    if (!open $fh, '<', $path) {
-        warn "failed to read state backup file $path: $!\n";
-        return undef;
-    }
-
-    my $state_json = do { local $/; <$fh> };
-    close $fh;
-    return undef if !defined $state_json || $state_json eq q{};
-
-    return "$state_json";
+    return Srv::SDK::StateBackup::read_state_from_backup($self);
 }
 
 sub _read_state_from_bootstrap {
     my ($self) = @_;
-
-    return undef if !defined $self->{bootstrap_function};
-
-    my $state_json;
-    eval {
-        $state_json = $self->{bootstrap_function}->();
-        1;
-    } or do {
-        my $err = $@ || 'unknown error';
-        warn "failed to get bootstrap state: $err";
-        return undef;
-    };
-
-    return undef if !defined $state_json || $state_json eq q{};
-    return "$state_json";
+    return Srv::SDK::Bootstrap::read_state_from_bootstrap($self);
 }
 
 sub _start_startup_hydration {
     my ($self) = @_;
-
-    return if $self->{_startup_hydration_started};
-    $self->{_startup_hydration_started} = 1;
-
-    my $http_p = $self->{fetch_features_task}->fetch_state_p();
-    my $bootstrap_p = Mojo::Promise->new;
-    my $backup_p = Mojo::Promise->new;
-
-    Mojo::IOLoop->next_tick(sub { $bootstrap_p->resolve($self->_read_state_from_bootstrap()) });
-    Mojo::IOLoop->next_tick(sub { $backup_p->resolve($self->_read_state_from_backup()) });
-
-    $http_p->then(sub {
-        my ($res) = @_;
-        if (ref($res) ne 'HASH') {
-            $self->_emit_error('startup fetch failed to resolve');
-            return;
-        }
-        if (defined $res->{error} && $res->{error} ne q{}) {
-            $self->_emit_error("startup fetch failed: $res->{error}");
-            return;
-        }
-        return if ($res->{status} || 0) == 304;
-        if (($res->{status} || 0) != 200) {
-            $self->_emit_error("startup fetch failed with status " . ($res->{status} || 'unknown'));
-            return;
-        }
-        my $state_json = $res->{state_json};
-        return if !defined $state_json || $state_json eq q{};
-
-        # HTTP wins if it is first, but also supersedes backup/bootstrap when they won first.
-        $self->{_startup_winner} = 'http' if !defined $self->{_startup_winner};
-        $self->_handle_successful_fetch_state("$state_json", $res->{etag});
-        $self->{_startup_winner} = 'http';
-        return;
-    })->catch(sub {
-        my ($err) = @_;
-        $self->_emit_error("startup http hydration failed: $err");
-    });
-
-    $bootstrap_p->then(sub {
-        my ($state_json) = @_;
-        return if !defined $state_json || $state_json eq q{};
-        return if defined $self->{_startup_winner} && $self->{_startup_winner} eq 'http';
-        return if defined $self->{_startup_winner} && $self->{_startup_winner} eq 'bootstrap';
-
-        # Bootstrap first discards backup, but HTTP still continues.
-        $self->{engine}->take_state("$state_json");
-        $self->{_startup_winner} = 'bootstrap';
-        return;
-    })->catch(sub {
-        my ($err) = @_;
-        warn "startup bootstrap hydration failed: $err\n";
-    });
-
-    $backup_p->then(sub {
-        my ($state_json) = @_;
-        return if !defined $state_json || $state_json eq q{};
-        return if defined $self->{_startup_winner} && $self->{_startup_winner} eq 'http';
-        return if defined $self->{_startup_winner} && $self->{_startup_winner} eq 'bootstrap';
-        return if defined $self->{_startup_winner} && $self->{_startup_winner} eq 'backup';
-
-        # Backup first hydrates, then bootstrap/http may still update later.
-        $self->{engine}->take_state("$state_json");
-        $self->{_startup_winner} = 'backup';
-        return;
-    })->catch(sub {
-        my ($err) = @_;
-        warn "startup backup hydration failed: $err\n";
-    });
-
-    return;
+    return Srv::SDK::StartupHydration::start_startup_hydration($self);
 }
 
 sub _generate_uuid {
@@ -475,13 +361,7 @@ sub _build_features_url {
 
 sub _handle_successful_fetch_state {
     my ($self, $state_json, $etag) = @_;
-    return if !defined $state_json || $state_json eq q{};
-
-    $self->{etag} = $etag if defined $etag && $etag ne q{};
-    $self->{engine}->take_state("$state_json");
-    $self->_backup_state_json("$state_json");
-    $self->_emit_ready_once();
-    return;
+    return Srv::SDK::StartupHydration::handle_successful_fetch_state($self, $state_json, $etag);
 }
 
 sub _emit_ready_once {

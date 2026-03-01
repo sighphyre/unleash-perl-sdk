@@ -10,6 +10,9 @@ bin/impression_usage.pl
 lib/Srv/SDK.pm
 lib/Srv/Scheduler.pm
 lib/Srv/SDK/Events.pm
+lib/Srv/SDK/Bootstrap.pm
+lib/Srv/SDK/StateBackup.pm
+lib/Srv/SDK/StartupHydration.pm
 lib/Srv/SDK/FetchFeatures.pm
 lib/Srv/SDK/SendMetrics.pm
 lib/Srv/SDK/Register.pm
