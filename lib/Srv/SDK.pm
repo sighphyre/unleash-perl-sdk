@@ -264,6 +264,36 @@ sub _register_client_once {
     return $self->{register_task}->run();
 }
 
+sub define_counter {
+    my ($self, $name, $help_text) = @_;
+    return $self->{engine}->define_counter($name, $help_text);
+}
+
+sub inc_counter {
+    my ($self, $name, $value, $labels) = @_;
+    return $self->{engine}->inc_counter($name, $value, $labels);
+}
+
+sub define_gauge {
+    my ($self, $name, $help_text) = @_;
+    return $self->{engine}->define_gauge($name, $help_text);
+}
+
+sub set_gauge {
+    my ($self, $name, $value, $labels) = @_;
+    return $self->{engine}->set_gauge($name, $value, $labels);
+}
+
+sub define_histogram {
+    my ($self, $name, $help_text, $buckets) = @_;
+    return $self->{engine}->define_histogram($name, $help_text, $buckets);
+}
+
+sub observe_histogram {
+    my ($self, $name, $value, $labels) = @_;
+    return $self->{engine}->observe_histogram($name, $value, $labels);
+}
+
 sub _build_metrics_url {
     my ($unleash_url) = @_;
 

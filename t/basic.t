@@ -126,12 +126,20 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
         return bless {
             take_state_calls => [],
             metrics_values   => $args{metrics_values} || [],
+            impact_values    => $args{impact_values} || [],
             enabled_values   => $args{enabled_values} || [],
             variant_values   => $args{variant_values} || [],
             should_emit_map  => $args{should_emit_map} || {},
             count_calls      => [],
             count_variant_calls => [],
             registered_custom_strategies => [],
+            restored_impact_metrics => [],
+            defined_counters  => [],
+            incremented_counters => [],
+            defined_gauges    => [],
+            set_gauges        => [],
+            defined_histograms => [],
+            observed_histograms => [],
         }, $class;
     }
     sub is_enabled {
@@ -146,6 +154,15 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
     sub get_metrics {
         my ($self) = @_;
         return shift @{ $self->{metrics_values} };
+    }
+    sub collect_impact_metrics {
+        my ($self) = @_;
+        return shift @{ $self->{impact_values} };
+    }
+    sub restore_impact_metrics {
+        my ($self, $metrics) = @_;
+        push @{ $self->{restored_impact_metrics} }, $metrics;
+        return;
     }
     sub get_variant {
         my ($self) = @_;
@@ -176,6 +193,36 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
         my ($self, $toggle_name) = @_;
         return $self->{should_emit_map}{$toggle_name} ? 1 : 0;
     }
+    sub define_counter {
+        my ($self, $name, $help_text) = @_;
+        push @{ $self->{defined_counters} }, { name => $name, help_text => $help_text };
+        return;
+    }
+    sub inc_counter {
+        my ($self, $name, $value, $labels) = @_;
+        push @{ $self->{incremented_counters} }, { name => $name, value => $value, labels => $labels };
+        return;
+    }
+    sub define_gauge {
+        my ($self, $name, $help_text) = @_;
+        push @{ $self->{defined_gauges} }, { name => $name, help_text => $help_text };
+        return;
+    }
+    sub set_gauge {
+        my ($self, $name, $value, $labels) = @_;
+        push @{ $self->{set_gauges} }, { name => $name, value => $value, labels => $labels };
+        return;
+    }
+    sub define_histogram {
+        my ($self, $name, $help_text, $buckets) = @_;
+        push @{ $self->{defined_histograms} }, { name => $name, help_text => $help_text, buckets => $buckets };
+        return;
+    }
+    sub observe_histogram {
+        my ($self, $name, $value, $labels) = @_;
+        push @{ $self->{observed_histograms} }, { name => $name, value => $value, labels => $labels };
+        return;
+    }
 }
 
 my $ua = TestUA->new(
@@ -204,6 +251,16 @@ my $engine = TestEngine->new(
     metrics_values => [
         { toggles => { demo_toggle => { yes => 1, no => 0 } } },
         {},
+    ],
+    impact_values => [
+        [
+            {
+                name    => 'purchases',
+                type    => 'counter',
+                samples => [ { labels => { appName => 'unleash-perl-app-test' }, value => 1 } ],
+            },
+        ],
+        [],
     ],
     enabled_values => [
         undef,
@@ -810,8 +867,95 @@ is_deeply(
     { toggles => { demo_toggle => { yes => 1, no => 0 } } },
     'send_metrics payload includes get_metrics bucket',
 );
+is_deeply(
+    $ua->{post_calls}[1]{payload}{impactMetrics},
+    [
+        {
+            name    => 'purchases',
+            type    => 'counter',
+            samples => [ { labels => { appName => 'unleash-perl-app-test' }, value => 1 } ],
+        },
+    ],
+    'send_metrics payload includes collected impact metrics',
+);
 
 $sdk->_send_metrics_once();
 is(scalar @{ $ua->{post_calls} }, 2, 'send_metrics skips POST when metrics bucket is empty');
+
+my $engine_impact_restore = TestEngine->new(
+    metrics_values => [
+        { toggles => { restore_case => { yes => 1, no => 0 } } },
+    ],
+    impact_values => [
+        [
+            { name => 'restore_metric', type => 'counter', samples => [ { labels => {}, value => 5 } ] },
+        ],
+    ],
+);
+my $ua_impact_restore = TestUA->new(
+    post_responses => [
+        { status => 500, body => q{}, etag => undef },
+    ],
+);
+my $sdk_impact_restore = Srv::SDK->new(
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'impact-restore-test-app',
+    state_backup_dir => $backup_dir,
+    fetch_features_interval => 0,
+    send_metrics_interval   => 0,
+    ua               => $ua_impact_restore,
+    engine           => $engine_impact_restore,
+);
+$sdk_impact_restore->_send_metrics_once();
+is(
+    scalar @{ $engine_impact_restore->{restored_impact_metrics} },
+    1,
+    'impact metrics are restored when metrics submit fails',
+);
+is_deeply(
+    $engine_impact_restore->{restored_impact_metrics}[0],
+    [
+        { name => 'restore_metric', type => 'counter', samples => [ { labels => {}, value => 5 } ] },
+    ],
+    'restored impact metrics payload matches collected metrics',
+);
+
+$sdk->define_counter('requests_total', 'Total requests');
+$sdk->inc_counter('requests_total', 2, { appName => 'unleash-perl-app-test' });
+$sdk->define_gauge('active_users', 'Active users');
+$sdk->set_gauge('active_users', 42, { appName => 'unleash-perl-app-test' });
+$sdk->define_histogram('latency_ms', 'Request latency', [100, 200, 500]);
+$sdk->observe_histogram('latency_ms', 123.4, { appName => 'unleash-perl-app-test' });
+is_deeply(
+    $engine->{defined_counters}[0],
+    { name => 'requests_total', help_text => 'Total requests' },
+    'define_counter delegates to engine',
+);
+is_deeply(
+    $engine->{incremented_counters}[0],
+    { name => 'requests_total', value => 2, labels => { appName => 'unleash-perl-app-test' } },
+    'inc_counter delegates to engine',
+);
+is_deeply(
+    $engine->{defined_gauges}[0],
+    { name => 'active_users', help_text => 'Active users' },
+    'define_gauge delegates to engine',
+);
+is_deeply(
+    $engine->{set_gauges}[0],
+    { name => 'active_users', value => 42, labels => { appName => 'unleash-perl-app-test' } },
+    'set_gauge delegates to engine',
+);
+is_deeply(
+    $engine->{defined_histograms}[0],
+    { name => 'latency_ms', help_text => 'Request latency', buckets => [100, 200, 500] },
+    'define_histogram delegates to engine',
+);
+is_deeply(
+    $engine->{observed_histograms}[0],
+    { name => 'latency_ms', value => 123.4, labels => { appName => 'unleash-perl-app-test' } },
+    'observe_histogram delegates to engine',
+);
 
 done_testing();

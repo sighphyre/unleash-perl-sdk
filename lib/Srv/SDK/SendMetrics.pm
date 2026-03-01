@@ -18,6 +18,7 @@ sub run {
     $sdk->{_metrics_in_flight} = 1;
 
     my $metrics_bucket;
+    my $impact_metrics;
     eval {
         $metrics_bucket = $sdk->{engine}->get_metrics();
         1;
@@ -28,7 +29,16 @@ sub run {
         return;
     };
 
-    if (!_has_metrics_data($metrics_bucket)) {
+    eval {
+        $impact_metrics = $sdk->{engine}->collect_impact_metrics();
+        1;
+    } or do {
+        my $err = $@ || 'unknown error';
+        warn "send_metrics collect_impact_metrics failed: $err";
+        $impact_metrics = undef;
+    };
+
+    if (!_has_metrics_data($metrics_bucket) && !_has_metrics_data($impact_metrics)) {
         $sdk->{_metrics_in_flight} = 0;
         return;
     }
@@ -39,6 +49,9 @@ sub run {
         connectionId => $sdk->{connection_id},
         bucket       => $metrics_bucket,
     };
+    if (_has_metrics_data($impact_metrics)) {
+        $metrics_request->{impactMetrics} = $impact_metrics;
+    }
 
     eval {
         $sdk->{ua}->post(
@@ -52,6 +65,13 @@ sub run {
                     if (!$result->is_success) {
                         my $status = $result->code || 'unknown';
                         warn "send_metrics request failed with status $status\n";
+                        if (_has_metrics_data($impact_metrics)) {
+                            eval { $sdk->{engine}->restore_impact_metrics($impact_metrics); 1; }
+                                or do {
+                                    my $restore_err = $@ || 'unknown error';
+                                    warn "send_metrics restore_impact_metrics failed: $restore_err";
+                                };
+                        }
                     }
                     1;
                 } or do {
@@ -67,6 +87,13 @@ sub run {
     } or do {
         my $err = $@ || 'unknown error';
         warn "send_metrics request failed: $err";
+        if (_has_metrics_data($impact_metrics)) {
+            eval { $sdk->{engine}->restore_impact_metrics($impact_metrics); 1; }
+                or do {
+                    my $restore_err = $@ || 'unknown error';
+                    warn "send_metrics restore_impact_metrics failed: $restore_err";
+                };
+        }
         $sdk->{_metrics_in_flight} = 0;
     };
 
