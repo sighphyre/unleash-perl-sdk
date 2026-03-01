@@ -43,6 +43,7 @@ sub new {
         api_key                  => $api_key,
         features_url             => _build_features_url($unleash_url),
         ua                       => $args{ua} || Mojo::UserAgent->new(),
+        etag                     => undef,
         fetch_features_scheduler => undef,
         send_metrics_scheduler   => undef,
         _fetch_in_flight         => 0,
@@ -123,18 +124,27 @@ sub _fetch_features_once {
     $self->{_fetch_in_flight} = 1;
 
     eval {
+        my %headers = (
+            Authorization => $self->{api_key},
+        );
+        if (defined $self->{etag} && $self->{etag} ne q{}) {
+            $headers{'If-None-Match'} = $self->{etag};
+        }
+
         $self->{ua}->get(
-            $self->{features_url} => {
-                Authorization => $self->{api_key},
-            } => sub {
+            $self->{features_url} => \%headers => sub {
                 my ($ua, $tx) = @_;
                 eval {
                     my $result = $tx->result;
+                    my $status = $result->code || 'unknown';
 
-                    if (!$result->is_success) {
-                        my $status = $result->code || 'unknown';
+                    if ($status == 304) {
+                        # State unchanged.
+                    } elsif (!$result->is_success) {
                         warn "fetch_features request failed with status $status\n";
                     } else {
+                        my $new_etag = $result->headers->header('ETag');
+                        $self->{etag} = $new_etag if defined $new_etag && $new_etag ne q{};
                         my $state_json = $result->body;
                         $state_json = q{} if !defined $state_json;
                         $self->{engine}->take_state("$state_json");

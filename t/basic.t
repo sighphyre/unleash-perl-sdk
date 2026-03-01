@@ -12,11 +12,26 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
 
 {
     package TestUA;
-    sub new { bless { calls => [] }, shift }
+    sub new {
+        my ($class, %args) = @_;
+        return bless {
+            calls     => [],
+            responses => $args{responses} || [],
+        }, $class;
+    }
     sub get {
         my ($self, $url, $headers, $cb) = @_;
         push @{ $self->{calls} }, { url => $url, headers => $headers };
-        my $tx = bless { body => '{"version":2,"features":[],"segments":[]}' }, 'TestTx';
+        my $resp = shift @{ $self->{responses} } || {
+            status => 200,
+            body   => '{"version":2,"features":[],"segments":[]}',
+            etag   => undef,
+        };
+        my $tx = bless {
+            body   => $resp->{body},
+            status => $resp->{status},
+            etag   => $resp->{etag},
+        }, 'TestTx';
         if (defined $cb && ref($cb) eq 'CODE') {
             $cb->($self, $tx);
         }
@@ -28,18 +43,41 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
     package TestTx;
     sub result {
         my ($self) = @_;
-        return bless { body => $self->{body} }, 'TestResult';
+        return bless {
+            body   => $self->{body},
+            status => $self->{status},
+            etag   => $self->{etag},
+        }, 'TestResult';
     }
 }
 
 {
     package TestResult;
-    sub is_success { return 1 }
+    sub is_success {
+        my ($self) = @_;
+        return (($self->{status} || 0) >= 200 && ($self->{status} || 0) < 300) ? 1 : 0;
+    }
     sub body {
         my ($self) = @_;
         return $self->{body};
     }
-    sub code { return 200 }
+    sub code {
+        my ($self) = @_;
+        return $self->{status};
+    }
+    sub headers {
+        my ($self) = @_;
+        return bless { etag => $self->{etag} }, 'TestHeaders';
+    }
+}
+
+{
+    package TestHeaders;
+    sub header {
+        my ($self, $name) = @_;
+        return $self->{etag} if $name eq 'ETag';
+        return undef;
+    }
 }
 
 {
@@ -53,7 +91,20 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
     }
 }
 
-my $ua = TestUA->new();
+my $ua = TestUA->new(
+    responses => [
+        {
+            status => 200,
+            body   => '{"version":2,"features":[],"segments":[]}',
+            etag   => '"76d8bb0e:526:v1"',
+        },
+        {
+            status => 304,
+            body   => q{},
+            etag   => undef,
+        },
+    ],
+);
 my $engine = TestEngine->new();
 my $sdk = Srv::SDK->new(
     unleash_url => $unleash_url,
@@ -94,7 +145,8 @@ $polling_sdk->shutdown();
 pass('shutdown stops in-process poller');
 
 $sdk->_fetch_features_once();
-is(scalar @{ $ua->{calls} }, 1, 'fetch_features performs one GET request');
+$sdk->_fetch_features_once();
+is(scalar @{ $ua->{calls} }, 2, 'fetch_features performs GET requests');
 is(
     $ua->{calls}[0]{url},
     ($unleash_url =~ s{/$}{}r) . '/client/features',
@@ -105,10 +157,19 @@ is(
     $api_key,
     'fetch_features passes api_key as Authorization header',
 );
+ok(
+    !exists $ua->{calls}[0]{headers}{'If-None-Match'},
+    'first fetch does not send If-None-Match',
+);
+is(
+    $ua->{calls}[1]{headers}{'If-None-Match'},
+    '"76d8bb0e:526:v1"',
+    'subsequent fetch sends previous ETag in If-None-Match header',
+);
 is(
     scalar @{ $engine->{take_state_calls} },
     1,
-    'fetch_features calls take_state once for successful response',
+    'take_state called only for non-304 response',
 );
 is(
     $engine->{take_state_calls}[0],
