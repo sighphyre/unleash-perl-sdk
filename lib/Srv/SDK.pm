@@ -85,7 +85,10 @@ sub is_enabled {
         return $fallback ? ($fallback->() ? 1 : 0) : 0;
     }
 
-    return $enabled ? 1 : 0;
+    my $enabled_bool = $enabled ? 1 : 0;
+    $self->{engine}->count_toggle($toggle_name, $enabled_bool);
+
+    return $enabled_bool;
 }
 
 sub initialize {

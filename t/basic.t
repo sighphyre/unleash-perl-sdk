@@ -114,9 +114,14 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
         return bless {
             take_state_calls => [],
             metrics_values   => $args{metrics_values} || [],
+            enabled_values   => $args{enabled_values} || [],
+            count_calls      => [],
         }, $class;
     }
-    sub is_enabled { return undef }
+    sub is_enabled {
+        my ($self) = @_;
+        return shift @{ $self->{enabled_values} };
+    }
     sub take_state {
         my ($self, $state_json) = @_;
         push @{ $self->{take_state_calls} }, $state_json;
@@ -125,6 +130,14 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
     sub get_metrics {
         my ($self) = @_;
         return shift @{ $self->{metrics_values} };
+    }
+    sub count_toggle {
+        my ($self, $toggle_name, $enabled) = @_;
+        push @{ $self->{count_calls} }, {
+            toggle_name => $toggle_name,
+            enabled     => $enabled,
+        };
+        return;
     }
 }
 
@@ -154,6 +167,11 @@ my $engine = TestEngine->new(
         { toggles => { demo_toggle => { yes => 1, no => 0 } } },
         {},
     ],
+    enabled_values => [
+        undef,
+        undef,
+        undef,
+    ],
 );
 my $sdk = Srv::SDK->new(
     unleash_url => $unleash_url,
@@ -180,6 +198,28 @@ is(
     0,
     'missing toggle without fallback defaults to false',
 );
+is(
+    scalar @{ $engine->{count_calls} },
+    0,
+    'is_enabled does not count metrics when result is undef',
+);
+
+my $engine_counting = TestEngine->new(
+    enabled_values => [1, 0],
+);
+my $sdk_counting = Srv::SDK->new(
+    unleash_url => $unleash_url,
+    api_key     => $api_key,
+    ua          => $ua,
+    engine      => $engine_counting,
+);
+is($sdk_counting->is_enabled('flag_on', {}, sub { 0 }), 1, 'returns true when engine returns true');
+is($sdk_counting->is_enabled('flag_off', {}, sub { 1 }), 0, 'returns false when engine returns false');
+is(scalar @{ $engine_counting->{count_calls} }, 2, 'count_toggle called for defined is_enabled results');
+is($engine_counting->{count_calls}[0]{toggle_name}, 'flag_on', 'count_toggle called with first toggle name');
+is($engine_counting->{count_calls}[0]{enabled}, 1, 'count_toggle enabled=1 for true result');
+is($engine_counting->{count_calls}[1]{toggle_name}, 'flag_off', 'count_toggle called with second toggle name');
+is($engine_counting->{count_calls}[1]{enabled}, 0, 'count_toggle enabled=0 for false result');
 
 my $polling_sdk = Srv::SDK->new(
     polling_interval => 1,
