@@ -36,11 +36,11 @@ sub new {
 
     my $fetch_features_interval = $args{fetch_features_interval};
     $fetch_features_interval = $polling_interval if !defined $fetch_features_interval;
-    die 'fetch_features_interval must be a positive number' if $fetch_features_interval <= 0;
+    die 'fetch_features_interval must be a non-negative number' if $fetch_features_interval < 0;
 
     my $send_metrics_interval = $args{send_metrics_interval};
     $send_metrics_interval = $polling_interval if !defined $send_metrics_interval;
-    die 'send_metrics_interval must be a positive number' if $send_metrics_interval <= 0;
+    die 'send_metrics_interval must be a non-negative number' if $send_metrics_interval < 0;
     my $app_name = $args{app_name};
     $app_name = 'unleash-perl-app' if !defined $app_name || $app_name eq q{};
     my $instance_id = $args{instance_id};
@@ -69,16 +69,20 @@ sub new {
         poller_running           => 0,
     }, $class;
 
-    $self->{fetch_features_scheduler} = Srv::Scheduler->new(
-        name     => 'fetch_features',
-        interval => $self->{fetch_features_interval},
-        task     => sub { $self->_fetch_features_once() },
-    );
-    $self->{send_metrics_scheduler} = Srv::Scheduler->new(
-        name     => 'send_metrics',
-        interval => $self->{send_metrics_interval},
-        task     => sub { $self->_send_metrics_once() },
-    );
+    if ($self->{fetch_features_interval} > 0) {
+        $self->{fetch_features_scheduler} = Srv::Scheduler->new(
+            name     => 'fetch_features',
+            interval => $self->{fetch_features_interval},
+            task     => sub { $self->_fetch_features_once() },
+        );
+    }
+    if ($self->{send_metrics_interval} > 0) {
+        $self->{send_metrics_scheduler} = Srv::Scheduler->new(
+            name     => 'send_metrics',
+            interval => $self->{send_metrics_interval},
+            task     => sub { $self->_send_metrics_once() },
+        );
+    }
 
     return $self;
 }
@@ -106,9 +110,16 @@ sub initialize {
 
     return if $self->{poller_running};
 
-    my $fetch_timer_id = $self->{fetch_features_scheduler}->start();
-    my $metrics_timer_id = $self->{send_metrics_scheduler}->start();
-    Mojo::IOLoop->next_tick(sub { $self->_fetch_features_once() });
+    my $fetch_timer_id;
+    my $metrics_timer_id;
+
+    if ($self->{fetch_features_scheduler}) {
+        $fetch_timer_id = $self->{fetch_features_scheduler}->start();
+        Mojo::IOLoop->next_tick(sub { $self->_fetch_features_once() });
+    }
+    if ($self->{send_metrics_scheduler}) {
+        $metrics_timer_id = $self->{send_metrics_scheduler}->start();
+    }
 
     $self->{poller_running} = 1;
     return {
@@ -122,8 +133,8 @@ sub shutdown {
 
     return if !$self->{poller_running};
 
-    $self->{fetch_features_scheduler}->stop();
-    $self->{send_metrics_scheduler}->stop();
+    $self->{fetch_features_scheduler}->stop() if $self->{fetch_features_scheduler};
+    $self->{send_metrics_scheduler}->stop() if $self->{send_metrics_scheduler};
 
     $self->{poller_running}   = 0;
     $self->{_fetch_in_flight} = 0;

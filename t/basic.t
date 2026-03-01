@@ -235,6 +235,21 @@ ok(defined $timers->{send_metrics}, 'initialize starts send_metrics scheduler');
 $polling_sdk->shutdown();
 pass('shutdown stops in-process poller');
 
+my $disabled_polling_sdk = Srv::SDK->new(
+    fetch_features_interval => 0,
+    send_metrics_interval   => 0,
+    unleash_url             => $unleash_url,
+    api_key                 => $api_key,
+    ua                      => $ua,
+    engine                  => $engine,
+);
+my $disabled_timers = $disabled_polling_sdk->initialize();
+ok(ref($disabled_timers) eq 'HASH', 'initialize returns timer hash when polls are disabled');
+ok(!defined $disabled_timers->{fetch_features}, 'fetch_features scheduler not created when interval is 0');
+ok(!defined $disabled_timers->{send_metrics}, 'send_metrics scheduler not created when interval is 0');
+$disabled_polling_sdk->shutdown();
+pass('shutdown is safe when polls are disabled');
+
 $sdk->_fetch_features_once();
 $sdk->_fetch_features_once();
 is(scalar @{ $ua->{get_calls} }, 2, 'fetch_features performs GET requests');
