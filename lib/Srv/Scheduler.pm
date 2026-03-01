@@ -14,9 +14,11 @@ sub new {
 
     my $task = $args{task};
     die 'task must be a coderef' if ref($task) ne 'CODE';
+    my $name = $args{name} || 'scheduler';
 
     my $self = bless {
         interval => $interval + 0,
+        name     => $name,
         task     => $task,
         timer_id => undef,
         running  => 0,
@@ -31,7 +33,15 @@ sub start {
     return $self->{timer_id} if $self->{running};
 
     $self->{timer_id} = Mojo::IOLoop->recurring(
-        $self->{interval} => $self->{task}
+        $self->{interval} => sub {
+            eval {
+                $self->{task}->();
+                1;
+            } or do {
+                my $err = $@ || 'unknown error';
+                warn "$self->{name} tick failed: $err";
+            };
+        }
     );
     $self->{running} = 1;
 

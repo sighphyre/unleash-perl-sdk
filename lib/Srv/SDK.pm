@@ -37,7 +37,7 @@ sub new {
     require Mojo::UserAgent;
 
     my $self = bless {
-        engine                   => Yggdrasil::Engine->new(),
+        engine                   => $args{engine} || Yggdrasil::Engine->new(),
         polling_interval         => $polling_interval + 0,
         unleash_url              => $unleash_url,
         api_key                  => $api_key,
@@ -51,10 +51,12 @@ sub new {
     }, $class;
 
     $self->{fetch_features_scheduler} = Srv::Scheduler->new(
+        name     => 'fetch_features',
         interval => $self->{polling_interval},
         task     => sub { $self->_fetch_features_once() },
     );
     $self->{send_metrics_scheduler} = Srv::Scheduler->new(
+        name     => 'send_metrics',
         interval => $self->{polling_interval},
         task     => sub { $self->_send_metrics_once() },
     );
@@ -120,23 +122,39 @@ sub _fetch_features_once {
     $self->{_fetch_in_flight} = 1;
 
     eval {
-        my $tx = $self->{ua}->get(
+        $self->{ua}->get(
             $self->{features_url} => {
                 Authorization => $self->{api_key},
+            } => sub {
+                my ($ua, $tx) = @_;
+                eval {
+                    my $result = $tx->result;
+
+                    if (!$result->is_success) {
+                        my $status = $result->code || 'unknown';
+                        warn "fetch_features request failed with status $status\n";
+                    } else {
+                        my $state_json = $result->body;
+                        $state_json = q{} if !defined $state_json;
+                        $self->{engine}->take_state("$state_json");
+                    }
+                    1;
+                } or do {
+                    my $err = $@ || 'unknown error';
+                    warn "fetch_features request failed: $err";
+                };
+
+                $self->{_fetch_in_flight} = 0;
+                return;
             }
         );
-
-        if (!$tx->result->is_success) {
-            my $status = $tx->result->code || 'unknown';
-            warn "fetch_features request failed with status $status\n";
-        }
         1;
     } or do {
         my $err = $@ || 'unknown error';
         warn "fetch_features request failed: $err";
+        $self->{_fetch_in_flight} = 0;
     };
 
-    $self->{_fetch_in_flight} = 0;
     return;
 }
 
