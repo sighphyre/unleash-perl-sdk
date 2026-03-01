@@ -267,22 +267,6 @@ Environment variables used by examples:
 - `UNLEASH_TOGGLE_NAME` (default depends on script)
 - `UNLEASH_EVAL_INTERVAL` (default `1`)
 
-## Testing
+## Development
 
-Run tests:
-
-```sh
-prove -I lib t
-```
-
-With local libs:
-
-```sh
-PERL5LIB="/tmp/yggdrasil-perl-local/lib/perl5:$PWD/.local/lib/perl5:$PERL5LIB" prove -I lib t
-```
-
-For client specification tests, clone the specs repo into project root:
-
-```sh
-git clone git@github.com:Unleash/client-specification.git
-```
+For local development, testing, and contribution setup, see [DEVELOPMENT.md](DEVELOPMENT.md).
