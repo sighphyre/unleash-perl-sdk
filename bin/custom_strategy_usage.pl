@@ -16,7 +16,9 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'default:development.unleash-insecure-api
 my $toggle_name = $ENV{UNLEASH_TOGGLE_NAME} || 'custom_strategy_toggle';
 my $eval_interval = exists $ENV{UNLEASH_EVAL_INTERVAL} ? $ENV{UNLEASH_EVAL_INTERVAL} : 1;
 
-# Example strategy: enabled when context.sound matches parameters.sound
+
+# To make this work, create a custom strategy in Unleash with the name "exampleStrategy" and add a parameter named "sound".
+# Add the strategy to a toggle name "custom_strategy_toggle" and set the parameter "sound" to "meow".
 my $example_strategy = sub {
     my ($parameters, $context) = @_;
     return 0 if ref($parameters) ne 'HASH' || ref($context) ne 'HASH';
