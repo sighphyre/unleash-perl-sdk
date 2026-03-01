@@ -6,6 +6,9 @@ use File::Basename qw(dirname);
 use File::Spec;
 use POSIX qw(strftime);
 use Srv::Scheduler;
+use Srv::SDK::FetchFeatures;
+use Srv::SDK::SendMetrics;
+use Srv::SDK::Register;
 
 our $VERSION = '0.01';
 our $SDK_NAME = 'unleash-perl-sdk';
@@ -79,11 +82,18 @@ sub new {
         etag                     => undef,
         fetch_features_scheduler => undef,
         send_metrics_scheduler   => undef,
+        fetch_features_task      => undef,
+        send_metrics_task        => undef,
+        register_task            => undef,
         _fetch_in_flight         => 0,
         _metrics_in_flight       => 0,
         _register_in_flight      => 0,
         poller_running           => 0,
     }, $class;
+
+    $self->{fetch_features_task} = Srv::SDK::FetchFeatures->new(sdk => $self);
+    $self->{send_metrics_task} = Srv::SDK::SendMetrics->new(sdk => $self);
+    $self->{register_task} = Srv::SDK::Register->new(sdk => $self);
 
     $self->_hydrate_state_from_backup();
 
@@ -91,14 +101,14 @@ sub new {
         $self->{fetch_features_scheduler} = Srv::Scheduler->new(
             name     => 'fetch_features',
             interval => $self->{fetch_features_interval},
-            task     => sub { $self->_fetch_features_once() },
+            task     => sub { $self->{fetch_features_task}->run() },
         );
     }
     if ($self->{send_metrics_interval} > 0) {
         $self->{send_metrics_scheduler} = Srv::Scheduler->new(
             name     => 'send_metrics',
             interval => $self->{send_metrics_interval},
-            task     => sub { $self->_send_metrics_once() },
+            task     => sub { $self->{send_metrics_task}->run() },
         );
     }
 
@@ -134,12 +144,12 @@ sub initialize {
 
     if ($self->{fetch_features_scheduler}) {
         $fetch_timer_id = $self->{fetch_features_scheduler}->start();
-        Mojo::IOLoop->next_tick(sub { $self->_fetch_features_once() });
+        Mojo::IOLoop->next_tick(sub { $self->{fetch_features_task}->run() });
     }
     if ($self->{send_metrics_scheduler}) {
         $metrics_timer_id = $self->{send_metrics_scheduler}->start();
     }
-    Mojo::IOLoop->next_tick(sub { $self->_register_client_once() });
+    Mojo::IOLoop->next_tick(sub { $self->{register_task}->run() });
 
     $self->{poller_running} = 1;
     return {
@@ -172,181 +182,17 @@ sub DESTROY {
 
 sub _fetch_features_once {
     my ($self) = @_;
-
-    return if $self->{_fetch_in_flight};
-    $self->{_fetch_in_flight} = 1;
-
-    eval {
-        my %headers = (
-            Authorization => $self->{api_key},
-        );
-        if (defined $self->{etag} && $self->{etag} ne q{}) {
-            $headers{'If-None-Match'} = $self->{etag};
-        }
-
-        $self->{ua}->get(
-            $self->{features_url} => \%headers => sub {
-                my ($ua, $tx) = @_;
-                eval {
-                    my $result = $tx->result;
-                    my $status = $result->code || 'unknown';
-
-                    if ($status == 304) {
-                        # State unchanged.
-                    } elsif (!$result->is_success) {
-                        warn "fetch_features request failed with status $status\n";
-                    } else {
-                        my $new_etag = $result->headers->header('ETag');
-                        $self->{etag} = $new_etag if defined $new_etag && $new_etag ne q{};
-                        my $state_json = $result->body;
-                        $state_json = q{} if !defined $state_json;
-                        $self->{engine}->take_state("$state_json");
-                        $self->_backup_state_json("$state_json");
-                    }
-                    1;
-                } or do {
-                    my $err = $@ || 'unknown error';
-                    warn "fetch_features request failed: $err";
-                };
-
-                $self->{_fetch_in_flight} = 0;
-                return;
-            }
-        );
-        1;
-    } or do {
-        my $err = $@ || 'unknown error';
-        warn "fetch_features request failed: $err";
-        $self->{_fetch_in_flight} = 0;
-    };
-
-    return;
+    return $self->{fetch_features_task}->run();
 }
 
 sub _send_metrics_once {
     my ($self) = @_;
-
-    return if $self->{_metrics_in_flight};
-    $self->{_metrics_in_flight} = 1;
-
-    my $metrics_bucket;
-    eval {
-        $metrics_bucket = $self->{engine}->get_metrics();
-        1;
-    } or do {
-        my $err = $@ || 'unknown error';
-        warn "send_metrics get_metrics failed: $err";
-        $self->{_metrics_in_flight} = 0;
-        return;
-    };
-
-    if (!_has_metrics_data($metrics_bucket)) {
-        $self->{_metrics_in_flight} = 0;
-        return;
-    }
-
-    my $metrics_request = {
-        appName      => $self->{app_name},
-        instanceId   => $self->{instance_id},
-        connectionId => $self->{connection_id},
-        bucket       => $metrics_bucket,
-    };
-
-    eval {
-        $self->{ua}->post(
-            $self->{metrics_url} => {
-                Authorization => $self->{api_key},
-                'Content-Type' => 'application/json',
-            } => json => $metrics_request => sub {
-                my ($ua, $tx) = @_;
-                eval {
-                    my $result = $tx->result;
-                    if (!$result->is_success) {
-                        my $status = $result->code || 'unknown';
-                        warn "send_metrics request failed with status $status\n";
-                    }
-                    1;
-                } or do {
-                    my $err = $@ || 'unknown error';
-                    warn "send_metrics request failed: $err";
-                };
-
-                $self->{_metrics_in_flight} = 0;
-                return;
-            }
-        );
-        1;
-    } or do {
-        my $err = $@ || 'unknown error';
-        warn "send_metrics request failed: $err";
-        $self->{_metrics_in_flight} = 0;
-    };
-
-    return;
+    return $self->{send_metrics_task}->run();
 }
 
 sub _register_client_once {
     my ($self) = @_;
-
-    return if $self->{_register_in_flight};
-    $self->{_register_in_flight} = 1;
-
-    my $request = {
-        appName        => $self->{app_name},
-        instanceId     => $self->{instance_id},
-        connectionId   => $self->{connection_id},
-        sdkVersion     => $SDK_NAME . ':' . $VERSION,
-        strategies     => $self->{supported_strategies},
-        started        => _utc_now_iso8601(),
-        interval       => $self->{send_metrics_interval},
-        platformName   => 'perl',
-        platformVersion => $],
-    };
-
-    eval {
-        $self->{ua}->post(
-            $self->{register_url} => {
-                Authorization => $self->{api_key},
-                'Content-Type' => 'application/json',
-            } => json => $request => sub {
-                my ($ua, $tx) = @_;
-                eval {
-                    my $result = $tx->result;
-                    my $status = $result->code || 'unknown';
-                    if ($status != 200 && $status != 202) {
-                        warn "register request failed with status $status\n";
-                    }
-                    1;
-                } or do {
-                    my $err = $@ || 'unknown error';
-                    warn "register request failed: $err";
-                };
-
-                $self->{_register_in_flight} = 0;
-                return;
-            }
-        );
-        1;
-    } or do {
-        my $err = $@ || 'unknown error';
-        warn "register request failed: $err";
-        $self->{_register_in_flight} = 0;
-    };
-
-    return;
-}
-
-sub _has_metrics_data {
-    my ($value) = @_;
-
-    return 0 if !defined $value;
-    if (ref($value) eq 'HASH') {
-        return scalar keys %{$value} ? 1 : 0;
-    }
-    if (ref($value) eq 'ARRAY') {
-        return scalar @{$value} ? 1 : 0;
-    }
-    return $value ? 1 : 0;
+    return $self->{register_task}->run();
 }
 
 sub _build_metrics_url {

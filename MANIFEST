@@ -4,4 +4,7 @@ README.md
 bin/hello.pl
 lib/Srv/SDK.pm
 lib/Srv/Scheduler.pm
+lib/Srv/SDK/FetchFeatures.pm
+lib/Srv/SDK/SendMetrics.pm
+lib/Srv/SDK/Register.pm
 t/basic.t
