@@ -26,4 +26,10 @@ is(
     'missing toggle without fallback defaults to false',
 );
 
+my $polling_sdk = Srv::SDK->new(polling_interval => 1);
+my $timer_id = $polling_sdk->initialize();
+ok(defined $timer_id, 'initialize starts in-process poller and returns timer id');
+$polling_sdk->shutdown();
+pass('shutdown stops in-process poller');
+
 done_testing();
