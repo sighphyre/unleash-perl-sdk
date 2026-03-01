@@ -805,6 +805,11 @@ is(
     $api_key,
     'fetch_features passes api_key as Authorization header',
 );
+is(
+    $ua->{get_calls}[0]{headers}{'Unleash-Client-Spec'},
+    '6.0.1',
+    'fetch_features passes Unleash-Client-Spec header',
+);
 ok(
     !exists $ua->{get_calls}[0]{headers}{'If-None-Match'},
     'first fetch does not send If-None-Match',

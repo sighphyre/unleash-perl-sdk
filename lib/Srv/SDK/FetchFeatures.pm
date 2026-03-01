@@ -21,6 +21,7 @@ sub run {
     eval {
         my %headers = (
             Authorization => $sdk->{api_key},
+            'Unleash-Client-Spec' => '6.0.1',
         );
         if (defined $sdk->{etag} && $sdk->{etag} ne q{}) {
             $headers{'If-None-Match'} = $sdk->{etag};
@@ -72,6 +73,7 @@ sub fetch_state_p {
     eval {
         my %headers = (
             Authorization => $sdk->{api_key},
+            'Unleash-Client-Spec' => '6.0.1',
         );
         if (defined $sdk->{etag} && $sdk->{etag} ne q{}) {
             $headers{'If-None-Match'} = $sdk->{etag};
