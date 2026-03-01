@@ -47,6 +47,8 @@ sub new {
     $app_name = 'unleash-perl-app' if !defined $app_name || $app_name eq q{};
     my $instance_id = $args{instance_id};
     $instance_id = _generate_uuid() if !defined $instance_id || $instance_id eq q{};
+    my $state_backup_dir = $args{state_backup_dir};
+    $state_backup_dir = '/tmp' if !defined $state_backup_dir || $state_backup_dir eq q{};
     my $supported_strategies = $args{supported_strategies};
     $supported_strategies = [] if !defined $supported_strategies;
     if (ref($supported_strategies) eq 'HASH') {
@@ -67,6 +69,8 @@ sub new {
         app_name                 => $app_name,
         instance_id              => $instance_id,
         connection_id            => _generate_uuid(),
+        state_backup_dir         => $state_backup_dir,
+        state_backup_file        => _build_state_backup_file($state_backup_dir, $app_name),
         supported_strategies     => $supported_strategies,
         features_url             => _build_features_url($unleash_url),
         metrics_url              => _build_metrics_url($unleash_url),
@@ -195,6 +199,7 @@ sub _fetch_features_once {
                         my $state_json = $result->body;
                         $state_json = q{} if !defined $state_json;
                         $self->{engine}->take_state("$state_json");
+                        $self->_backup_state_json("$state_json");
                     }
                     1;
                 } or do {
@@ -358,6 +363,35 @@ sub _build_register_url {
 
 sub _utc_now_iso8601 {
     return strftime('%Y-%m-%dT%H:%M:%SZ', gmtime());
+}
+
+sub _build_state_backup_file {
+    my ($dir, $app_name) = @_;
+    my $safe_app_name = $app_name;
+    $safe_app_name =~ s{[^A-Za-z0-9._-]}{_}g;
+    return File::Spec->catfile($dir, $safe_app_name . '-perl-sdk.json');
+}
+
+sub _backup_state_json {
+    my ($self, $state_json) = @_;
+
+    my $path = $self->{state_backup_file};
+    my $dir = $self->{state_backup_dir};
+
+    if (!-d $dir) {
+        warn "state backup directory does not exist: $dir\n";
+        return;
+    }
+
+    my $fh;
+    if (!open $fh, '>', $path) {
+        warn "failed to write state backup file $path: $!\n";
+        return;
+    }
+
+    print {$fh} $state_json;
+    close $fh;
+    return;
 }
 
 sub _generate_uuid {

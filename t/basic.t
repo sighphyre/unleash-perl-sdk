@@ -2,6 +2,8 @@ use strict;
 use warnings;
 
 use Test::More;
+use File::Spec;
+use File::Temp qw(tempdir);
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 
@@ -162,6 +164,7 @@ my $ua = TestUA->new(
         },
     ],
 );
+my $backup_dir = tempdir(CLEANUP => 1);
 my $engine = TestEngine->new(
     metrics_values => [
         { toggles => { demo_toggle => { yes => 1, no => 0 } } },
@@ -178,6 +181,7 @@ my $sdk = Srv::SDK->new(
     api_key     => $api_key,
     app_name    => 'unleash-perl-app-test',
     instance_id => '11111111-1111-4111-8111-111111111111',
+    state_backup_dir => $backup_dir,
     supported_strategies => [qw/default gradualRolloutUserId/],
     ua          => $ua,
     engine      => $engine,
@@ -330,6 +334,16 @@ is(
     $engine->{take_state_calls}[0],
     '{"version":2,"features":[],"segments":[]}',
     'fetch_features passes response body string to take_state',
+);
+my $backup_file = File::Spec->catfile($backup_dir, 'unleash-perl-app-test_perl_sdk.json');
+ok(-f $backup_file, 'fetch_features writes state backup file');
+open my $backup_fh, '<', $backup_file or die "failed to read backup file: $!";
+my $backup_content = do { local $/; <$backup_fh> };
+close $backup_fh;
+is(
+    $backup_content,
+    '{"version":2,"features":[],"segments":[]}',
+    'backup file stores fetched state JSON body',
 );
 
 $sdk->_send_metrics_once();
