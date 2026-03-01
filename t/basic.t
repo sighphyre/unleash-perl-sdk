@@ -27,8 +27,10 @@ is(
 );
 
 my $polling_sdk = Srv::SDK->new(polling_interval => 1);
-my $timer_id = $polling_sdk->initialize();
-ok(defined $timer_id, 'initialize starts in-process poller and returns timer id');
+my $timers = $polling_sdk->initialize();
+ok(ref($timers) eq 'HASH', 'initialize returns scheduler timer ids');
+ok(defined $timers->{fetch_features}, 'initialize starts fetch_features scheduler');
+ok(defined $timers->{send_metrics}, 'initialize starts send_metrics scheduler');
 $polling_sdk->shutdown();
 pass('shutdown stops in-process poller');
 

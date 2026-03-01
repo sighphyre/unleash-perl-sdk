@@ -3,4 +3,5 @@ MANIFEST
 README.md
 bin/hello.pl
 lib/Srv/SDK.pm
+lib/Srv/Scheduler.pm
 t/basic.t

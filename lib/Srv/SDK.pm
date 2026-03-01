@@ -5,6 +5,7 @@ use warnings;
 use JSON::PP qw(encode_json);
 use File::Basename qw(dirname);
 use File::Spec;
+use Srv::Scheduler;
 
 our $VERSION = '0.01';
 
@@ -23,22 +24,28 @@ BEGIN {
 sub new {
     my ($class, %args) = @_;
 
-    require Mojo::IOLoop;
-
     my $polling_interval = $args{polling_interval};
     $polling_interval = 15 if !defined $polling_interval;
     die 'polling_interval must be a positive number' if $polling_interval <= 0;
 
     my $self = bless {
-        engine           => Yggdrasil::Engine->new(),
-        polling_interval => $polling_interval + 0,
-
-        _poll_timer_id   => undef,
-
-        _poll_in_flight  => 0,
-
-        poller_running   => 0,
+        engine                  => Yggdrasil::Engine->new(),
+        polling_interval        => $polling_interval + 0,
+        fetch_features_scheduler => undef,
+        send_metrics_scheduler   => undef,
+        _fetch_in_flight         => 0,
+        _metrics_in_flight       => 0,
+        poller_running           => 0,
     }, $class;
+
+    $self->{fetch_features_scheduler} = Srv::Scheduler->new(
+        interval => $self->{polling_interval},
+        task     => sub { $self->_fetch_features_once() },
+    );
+    $self->{send_metrics_scheduler} = Srv::Scheduler->new(
+        interval => $self->{polling_interval},
+        task     => sub { $self->_send_metrics_once() },
+    );
 
     return $self;
 }
@@ -63,14 +70,14 @@ sub initialize {
 
     return if $self->{poller_running};
 
-    my $interval = $self->{polling_interval};
-
-    $self->{_poll_timer_id} = Mojo::IOLoop->recurring(
-        $interval => sub { $self->_poll_once }
-    );
+    my $fetch_timer_id = $self->{fetch_features_scheduler}->start();
+    my $metrics_timer_id = $self->{send_metrics_scheduler}->start();
 
     $self->{poller_running} = 1;
-    return $self->{_poll_timer_id};
+    return {
+        fetch_features => $fetch_timer_id,
+        send_metrics   => $metrics_timer_id,
+    };
 }
 
 sub shutdown {
@@ -78,13 +85,12 @@ sub shutdown {
 
     return if !$self->{poller_running};
 
-    if (defined $self->{_poll_timer_id}) {
-        Mojo::IOLoop->remove($self->{_poll_timer_id});
-        $self->{_poll_timer_id} = undef;
-    }
+    $self->{fetch_features_scheduler}->stop();
+    $self->{send_metrics_scheduler}->stop();
 
-    $self->{poller_running}  = 0;
-    $self->{_poll_in_flight} = 0;
+    $self->{poller_running}   = 0;
+    $self->{_fetch_in_flight} = 0;
+    $self->{_metrics_in_flight} = 0;
 
     return;
 }
@@ -95,15 +101,27 @@ sub DESTROY {
     return;
 }
 
-sub _poll_once {
+sub _fetch_features_once {
     my ($self) = @_;
 
-    return if $self->{_poll_in_flight};
-    $self->{_poll_in_flight} = 1;
+    return if $self->{_fetch_in_flight};
+    $self->{_fetch_in_flight} = 1;
 
-    print "hello\n";
+    print "fetch_features\n";
 
-    $self->{_poll_in_flight} = 0;
+    $self->{_fetch_in_flight} = 0;
+    return;
+}
+
+sub _send_metrics_once {
+    my ($self) = @_;
+
+    return if $self->{_metrics_in_flight};
+    $self->{_metrics_in_flight} = 1;
+
+    print "send_metrics\n";
+
+    $self->{_metrics_in_flight} = 0;
 
     return;
 }
