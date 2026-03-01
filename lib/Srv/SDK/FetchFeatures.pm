@@ -36,7 +36,7 @@ sub run {
                     if ($status == 304) {
                         # State unchanged.
                     } elsif (!$result->is_success) {
-                        warn "fetch_features request failed with status $status\n";
+                        $sdk->_emit_error("fetch_features request failed with status $status");
                     } else {
                         my $state_json = $result->body;
                         $state_json = q{} if !defined $state_json;
@@ -46,7 +46,7 @@ sub run {
                     1;
                 } or do {
                     my $err = $@ || 'unknown error';
-                    warn "fetch_features request failed: $err";
+                    $sdk->_emit_error("fetch_features request failed: $err");
                 };
 
                 $sdk->{_fetch_in_flight} = 0;
@@ -56,7 +56,7 @@ sub run {
         1;
     } or do {
         my $err = $@ || 'unknown error';
-        warn "fetch_features request failed: $err";
+        $sdk->_emit_error("fetch_features request failed: $err");
         $sdk->{_fetch_in_flight} = 0;
     };
 
@@ -87,8 +87,7 @@ sub fetch_state_p {
                     if ($status == 304) {
                         $p->resolve({ status => 304 });
                     } elsif (!$result->is_success) {
-                        warn "fetch_features request failed with status $status\n";
-                        $p->resolve({ status => $status });
+                        $p->resolve({ status => $status, error => "fetch_features request failed with status $status" });
                     } else {
                         $p->resolve({
                             status     => $status,
@@ -99,16 +98,14 @@ sub fetch_state_p {
                     1;
                 } or do {
                     my $err = $@ || 'unknown error';
-                    warn "fetch_features request failed: $err";
-                    $p->resolve(undef);
+                    $p->resolve({ error => "fetch_features request failed: $err" });
                 };
             }
         );
         1;
     } or do {
         my $err = $@ || 'unknown error';
-        warn "fetch_features request failed: $err";
-        $p->resolve(undef);
+        $p->resolve({ error => "fetch_features request failed: $err" });
     };
 
     return $p;

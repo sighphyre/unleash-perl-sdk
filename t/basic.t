@@ -507,6 +507,70 @@ $sdk_ready_late->_fetch_features_once();
 is($ready_late_count, 1, 'ready emitted only once');
 $sdk_ready_late->shutdown();
 
+my $engine_error_startup = TestEngine->new();
+my $sdk_error_startup = Srv::SDK->new(
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'error-startup-test-app',
+    state_backup_dir => $backup_dir,
+    fetch_features_interval => 0,
+    send_metrics_interval   => 0,
+    ua               => TestUA->new(
+        get_responses => [
+            { status => 500, body => q{}, etag => undef },
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine           => $engine_error_startup,
+);
+my @startup_errors;
+$sdk_error_startup->on(error => sub {
+    my ($sdk, $message) = @_;
+    push @startup_errors, $message;
+});
+$sdk_error_startup->initialize();
+Mojo::IOLoop->one_tick() for 1..3;
+is(scalar @startup_errors, 1, 'error emitted when startup fetch fails to resolve');
+like(
+    $startup_errors[0],
+    qr/startup fetch failed: fetch_features request failed with status 500/,
+    'startup error includes failure reason',
+);
+$sdk_error_startup->shutdown();
+
+my $engine_error_late = TestEngine->new();
+my $sdk_error_late = Srv::SDK->new(
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'error-late-test-app',
+    state_backup_dir => $backup_dir,
+    fetch_features_interval => 0,
+    send_metrics_interval   => 0,
+    ua               => TestUA->new(
+        get_responses => [
+            { status => 304, body => q{}, etag => undef }, # startup
+            { status => 503, body => q{}, etag => undef }, # subsequent
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine           => $engine_error_late,
+);
+my @late_errors;
+$sdk_error_late->on(error => sub {
+    my ($sdk, $message) = @_;
+    push @late_errors, $message;
+});
+$sdk_error_late->initialize();
+Mojo::IOLoop->one_tick() for 1..3;
+$sdk_error_late->_fetch_features_once();
+is(scalar @late_errors, 1, 'error emitted when subsequent fetch fails');
+like($late_errors[0], qr/fetch_features request failed with status 503/, 'subsequent error includes failure reason');
+$sdk_error_late->shutdown();
+
 my $polling_sdk = Srv::SDK->new(
     polling_interval => 1,
     unleash_url      => $unleash_url . '/',

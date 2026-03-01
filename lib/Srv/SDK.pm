@@ -345,8 +345,19 @@ sub _start_startup_hydration {
 
     $http_p->then(sub {
         my ($res) = @_;
-        return if ref($res) ne 'HASH';
-        return if ($res->{status} || 0) != 200;
+        if (ref($res) ne 'HASH') {
+            $self->_emit_error('startup fetch failed to resolve');
+            return;
+        }
+        if (defined $res->{error} && $res->{error} ne q{}) {
+            $self->_emit_error("startup fetch failed: $res->{error}");
+            return;
+        }
+        return if ($res->{status} || 0) == 304;
+        if (($res->{status} || 0) != 200) {
+            $self->_emit_error("startup fetch failed with status " . ($res->{status} || 'unknown'));
+            return;
+        }
         my $state_json = $res->{state_json};
         return if !defined $state_json || $state_json eq q{};
 
@@ -357,7 +368,7 @@ sub _start_startup_hydration {
         return;
     })->catch(sub {
         my ($err) = @_;
-        warn "startup http hydration failed: $err\n";
+        $self->_emit_error("startup http hydration failed: $err");
     });
 
     $bootstrap_p->then(sub {
@@ -428,6 +439,14 @@ sub _emit_ready_once {
     return if $self->{_ready_emitted};
     $self->{_ready_emitted} = 1;
     $self->emit('ready');
+    return;
+}
+
+sub _emit_error {
+    my ($self, $message) = @_;
+    $message = 'unknown fetch error' if !defined $message || $message eq q{};
+    warn "$message\n";
+    $self->emit('error', $message) if $self->can('has_subscribers') && $self->has_subscribers('error');
     return;
 }
 
