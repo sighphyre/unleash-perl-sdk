@@ -15,14 +15,16 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
     sub new {
         my ($class, %args) = @_;
         return bless {
-            calls     => [],
-            responses => $args{responses} || [],
+            get_calls      => [],
+            get_responses  => $args{get_responses} || [],
+            post_calls     => [],
+            post_responses => $args{post_responses} || [],
         }, $class;
     }
     sub get {
         my ($self, $url, $headers, $cb) = @_;
-        push @{ $self->{calls} }, { url => $url, headers => $headers };
-        my $resp = shift @{ $self->{responses} } || {
+        push @{ $self->{get_calls} }, { url => $url, headers => $headers };
+        my $resp = shift @{ $self->{get_responses} } || {
             status => 200,
             body   => '{"version":2,"features":[],"segments":[]}',
             etag   => undef,
@@ -32,6 +34,31 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
             status => $resp->{status},
             etag   => $resp->{etag},
         }, 'TestTx';
+        if (defined $cb && ref($cb) eq 'CODE') {
+            $cb->($self, $tx);
+        }
+        return $tx;
+    }
+    sub post {
+        my ($self, $url, $headers, $json_kw, $payload, $cb) = @_;
+        push @{ $self->{post_calls} }, {
+            url      => $url,
+            headers  => $headers,
+            json_kw  => $json_kw,
+            payload  => $payload,
+        };
+
+        my $resp = shift @{ $self->{post_responses} } || {
+            status => 202,
+            body   => q{},
+            etag   => undef,
+        };
+        my $tx = bless {
+            body   => $resp->{body},
+            status => $resp->{status},
+            etag   => $resp->{etag},
+        }, 'TestTx';
+
         if (defined $cb && ref($cb) eq 'CODE') {
             $cb->($self, $tx);
         }
@@ -82,17 +109,27 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
 
 {
     package TestEngine;
-    sub new { bless { take_state_calls => [] }, shift }
+    sub new {
+        my ($class, %args) = @_;
+        return bless {
+            take_state_calls => [],
+            metrics_values   => $args{metrics_values} || [],
+        }, $class;
+    }
     sub is_enabled { return undef }
     sub take_state {
         my ($self, $state_json) = @_;
         push @{ $self->{take_state_calls} }, $state_json;
         return;
     }
+    sub get_metrics {
+        my ($self) = @_;
+        return shift @{ $self->{metrics_values} };
+    }
 }
 
 my $ua = TestUA->new(
-    responses => [
+    get_responses => [
         {
             status => 200,
             body   => '{"version":2,"features":[],"segments":[]}',
@@ -104,11 +141,25 @@ my $ua = TestUA->new(
             etag   => undef,
         },
     ],
+    post_responses => [
+        {
+            status => 202,
+            body   => q{},
+            etag   => undef,
+        },
+    ],
 );
-my $engine = TestEngine->new();
+my $engine = TestEngine->new(
+    metrics_values => [
+        { toggles => { demo_toggle => { yes => 1, no => 0 } } },
+        {},
+    ],
+);
 my $sdk = Srv::SDK->new(
     unleash_url => $unleash_url,
     api_key     => $api_key,
+    app_name    => 'unleash-perl-app-test',
+    instance_id => '11111111-1111-4111-8111-111111111111',
     ua          => $ua,
     engine      => $engine,
 );
@@ -146,23 +197,23 @@ pass('shutdown stops in-process poller');
 
 $sdk->_fetch_features_once();
 $sdk->_fetch_features_once();
-is(scalar @{ $ua->{calls} }, 2, 'fetch_features performs GET requests');
+is(scalar @{ $ua->{get_calls} }, 2, 'fetch_features performs GET requests');
 is(
-    $ua->{calls}[0]{url},
+    $ua->{get_calls}[0]{url},
     ($unleash_url =~ s{/$}{}r) . '/client/features',
     'fetch_features uses /client/features endpoint',
 );
 is(
-    $ua->{calls}[0]{headers}{Authorization},
+    $ua->{get_calls}[0]{headers}{Authorization},
     $api_key,
     'fetch_features passes api_key as Authorization header',
 );
 ok(
-    !exists $ua->{calls}[0]{headers}{'If-None-Match'},
+    !exists $ua->{get_calls}[0]{headers}{'If-None-Match'},
     'first fetch does not send If-None-Match',
 );
 is(
-    $ua->{calls}[1]{headers}{'If-None-Match'},
+    $ua->{get_calls}[1]{headers}{'If-None-Match'},
     '"76d8bb0e:526:v1"',
     'subsequent fetch sends previous ETag in If-None-Match header',
 );
@@ -176,5 +227,41 @@ is(
     '{"version":2,"features":[],"segments":[]}',
     'fetch_features passes response body string to take_state',
 );
+
+$sdk->_send_metrics_once();
+is(scalar @{ $ua->{post_calls} }, 1, 'send_metrics posts when metrics bucket has data');
+is(
+    $ua->{post_calls}[0]{url},
+    ($unleash_url =~ s{/$}{}r) . '/client/metrics',
+    'send_metrics uses /client/metrics endpoint',
+);
+is(
+    $ua->{post_calls}[0]{headers}{Authorization},
+    $api_key,
+    'send_metrics passes api_key as Authorization header',
+);
+is(
+    $ua->{post_calls}[0]{payload}{appName},
+    'unleash-perl-app-test',
+    'send_metrics payload includes appName',
+);
+is(
+    $ua->{post_calls}[0]{payload}{instanceId},
+    '11111111-1111-4111-8111-111111111111',
+    'send_metrics payload includes provided instanceId',
+);
+like(
+    $ua->{post_calls}[0]{payload}{connectionId},
+    qr/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i,
+    'send_metrics payload includes internal connectionId UUID',
+);
+is_deeply(
+    $ua->{post_calls}[0]{payload}{bucket},
+    { toggles => { demo_toggle => { yes => 1, no => 0 } } },
+    'send_metrics payload includes get_metrics bucket',
+);
+
+$sdk->_send_metrics_once();
+is(scalar @{ $ua->{post_calls} }, 1, 'send_metrics skips POST when metrics bucket is empty');
 
 done_testing();

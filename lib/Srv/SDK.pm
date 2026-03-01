@@ -2,7 +2,6 @@ package Srv::SDK;
 
 use strict;
 use warnings;
-use JSON::PP qw(encode_json);
 use File::Basename qw(dirname);
 use File::Spec;
 use Srv::Scheduler;
@@ -29,10 +28,15 @@ sub new {
 
     my $api_key = $args{api_key};
     die 'api_key is required' if !defined $api_key || $api_key eq q{};
+    die 'connection_id cannot be set by caller' if exists $args{connection_id};
 
     my $polling_interval = $args{polling_interval};
     $polling_interval = 15 if !defined $polling_interval;
     die 'polling_interval must be a positive number' if $polling_interval <= 0;
+    my $app_name = $args{app_name};
+    $app_name = 'unleash-perl-app' if !defined $app_name || $app_name eq q{};
+    my $instance_id = $args{instance_id};
+    $instance_id = _generate_uuid() if !defined $instance_id || $instance_id eq q{};
 
     require Mojo::UserAgent;
 
@@ -41,7 +45,11 @@ sub new {
         polling_interval         => $polling_interval + 0,
         unleash_url              => $unleash_url,
         api_key                  => $api_key,
+        app_name                 => $app_name,
+        instance_id              => $instance_id,
+        connection_id            => _generate_uuid(),
         features_url             => _build_features_url($unleash_url),
+        metrics_url              => _build_metrics_url($unleash_url),
         ua                       => $args{ua} || Mojo::UserAgent->new(),
         etag                     => undef,
         fetch_features_scheduler => undef,
@@ -175,11 +183,91 @@ sub _send_metrics_once {
     return if $self->{_metrics_in_flight};
     $self->{_metrics_in_flight} = 1;
 
-    print "send_metrics\n";
+    my $metrics_bucket;
+    eval {
+        $metrics_bucket = $self->{engine}->get_metrics();
+        1;
+    } or do {
+        my $err = $@ || 'unknown error';
+        warn "send_metrics get_metrics failed: $err";
+        $self->{_metrics_in_flight} = 0;
+        return;
+    };
 
-    $self->{_metrics_in_flight} = 0;
+    if (!_has_metrics_data($metrics_bucket)) {
+        $self->{_metrics_in_flight} = 0;
+        return;
+    }
+
+    my $metrics_request = {
+        appName      => $self->{app_name},
+        instanceId   => $self->{instance_id},
+        connectionId => $self->{connection_id},
+        bucket       => $metrics_bucket,
+    };
+
+    eval {
+        $self->{ua}->post(
+            $self->{metrics_url} => {
+                Authorization => $self->{api_key},
+                'Content-Type' => 'application/json',
+            } => json => $metrics_request => sub {
+                my ($ua, $tx) = @_;
+                eval {
+                    my $result = $tx->result;
+                    if (!$result->is_success) {
+                        my $status = $result->code || 'unknown';
+                        warn "send_metrics request failed with status $status\n";
+                    }
+                    1;
+                } or do {
+                    my $err = $@ || 'unknown error';
+                    warn "send_metrics request failed: $err";
+                };
+
+                $self->{_metrics_in_flight} = 0;
+                return;
+            }
+        );
+        1;
+    } or do {
+        my $err = $@ || 'unknown error';
+        warn "send_metrics request failed: $err";
+        $self->{_metrics_in_flight} = 0;
+    };
 
     return;
+}
+
+sub _has_metrics_data {
+    my ($value) = @_;
+
+    return 0 if !defined $value;
+    if (ref($value) eq 'HASH') {
+        return scalar keys %{$value} ? 1 : 0;
+    }
+    if (ref($value) eq 'ARRAY') {
+        return scalar @{$value} ? 1 : 0;
+    }
+    return $value ? 1 : 0;
+}
+
+sub _build_metrics_url {
+    my ($unleash_url) = @_;
+
+    $unleash_url =~ s{/$}{};
+    return $unleash_url . '/client/metrics';
+}
+
+sub _generate_uuid {
+    my @bytes = map { int(rand(256)) } 1..16;
+    $bytes[6] = ($bytes[6] & 0x0f) | 0x40;
+    $bytes[8] = ($bytes[8] & 0x3f) | 0x80;
+
+    return sprintf(
+        '%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x',
+        @bytes
+    );
 }
 
 sub _build_features_url {
