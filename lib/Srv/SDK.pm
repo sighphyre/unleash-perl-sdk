@@ -24,17 +24,24 @@ sub new {
     my ($class, %args) = @_;
 
     my $self = bless {
-        toggle_name => $args{toggle_name} || 'sdk_mechanics_check',
-        engine      => Yggdrasil::Engine->new(),
+        engine => Yggdrasil::Engine->new(),
     }, $class;
 
     return $self;
 }
 
 sub is_enabled {
-    my ($self, $context) = @_;
+    my ($self, $toggle_name, $context, $fallback) = @_;
 
-    my $enabled = $self->{engine}->is_enabled($self->{toggle_name}, $context || {});
+    die 'toggle_name is required' if !defined $toggle_name || $toggle_name eq q{};
+    die 'fallback must be a coderef' if defined $fallback && ref($fallback) ne 'CODE';
+
+    my $enabled = $self->{engine}->is_enabled($toggle_name, $context || {});
+
+    if (!defined $enabled) {
+        return $fallback ? ($fallback->() ? 1 : 0) : 0;
+    }
+
     return $enabled ? 1 : 0;
 }
 
