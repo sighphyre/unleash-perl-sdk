@@ -411,6 +411,102 @@ is($engine_variant->{count_calls}[2]{enabled}, 0, 'default fallback count_toggle
 is(scalar @{ $engine_variant->{count_variant_calls} }, 4, 'default fallback counts variant');
 is($engine_variant->{count_variant_calls}[3]{variant_name}, 'disabled', 'default fallback variant name counted as disabled');
 
+my $engine_ready_http = TestEngine->new();
+my $sdk_ready_http = Srv::SDK->new(
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'ready-http-test-app',
+    state_backup_dir => $backup_dir,
+    fetch_features_interval => 0,
+    send_metrics_interval   => 0,
+    ua               => TestUA->new(
+        get_responses => [
+            {
+                status => 200,
+                body   => '{"version":2,"features":[{"name":"ready_http"}],"segments":[]}',
+                etag   => '"ready-http-etag"',
+            },
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine           => $engine_ready_http,
+);
+my $ready_http_count = 0;
+$sdk_ready_http->on(ready => sub { $ready_http_count++; });
+$sdk_ready_http->initialize();
+Mojo::IOLoop->one_tick() for 1..3;
+is($ready_http_count, 1, 'ready emitted when initial HTTP fetch succeeds');
+$sdk_ready_http->shutdown();
+
+my $engine_ready_no_http = TestEngine->new();
+my $sdk_ready_no_http = Srv::SDK->new(
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'ready-no-http-test-app',
+    state_backup_dir => $backup_dir,
+    fetch_features_interval => 0,
+    send_metrics_interval   => 0,
+    bootstrap_function => sub {
+        return '{"version":2,"features":[{"name":"bootstrap_only"}],"segments":[]}';
+    },
+    ua               => TestUA->new(
+        get_responses => [
+            { status => 304, body => q{}, etag => undef },
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine           => $engine_ready_no_http,
+);
+my $ready_no_http_count = 0;
+$sdk_ready_no_http->on(ready => sub { $ready_no_http_count++; });
+$sdk_ready_no_http->initialize();
+Mojo::IOLoop->one_tick() for 1..3;
+is($ready_no_http_count, 0, 'ready is not emitted by bootstrap or backup without HTTP success');
+$sdk_ready_no_http->shutdown();
+
+my $engine_ready_late = TestEngine->new();
+my $sdk_ready_late = Srv::SDK->new(
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'ready-late-http-test-app',
+    state_backup_dir => $backup_dir,
+    fetch_features_interval => 0,
+    send_metrics_interval   => 0,
+    ua               => TestUA->new(
+        get_responses => [
+            { status => 304, body => q{}, etag => undef }, # startup
+            {
+                status => 200,
+                body   => '{"version":2,"features":[{"name":"late_http"}],"segments":[]}',
+                etag   => '"late-http-etag"',
+            },
+            {
+                status => 200,
+                body   => '{"version":2,"features":[{"name":"late_http_2"}],"segments":[]}',
+                etag   => '"late-http-etag-2"',
+            },
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine           => $engine_ready_late,
+);
+my $ready_late_count = 0;
+$sdk_ready_late->on(ready => sub { $ready_late_count++; });
+$sdk_ready_late->initialize();
+Mojo::IOLoop->one_tick() for 1..3;
+is($ready_late_count, 0, 'ready not emitted when startup HTTP fetch does not succeed');
+$sdk_ready_late->_fetch_features_once();
+is($ready_late_count, 1, 'ready emitted on subsequent successful HTTP fetch');
+$sdk_ready_late->_fetch_features_once();
+is($ready_late_count, 1, 'ready emitted only once');
+$sdk_ready_late->shutdown();
+
 my $polling_sdk = Srv::SDK->new(
     polling_interval => 1,
     unleash_url      => $unleash_url . '/',

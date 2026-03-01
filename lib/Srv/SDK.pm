@@ -2,6 +2,7 @@ package Srv::SDK;
 
 use strict;
 use warnings;
+use parent 'Mojo::EventEmitter';
 use File::Basename qw(dirname);
 use File::Spec;
 use POSIX qw(strftime);
@@ -71,38 +72,38 @@ sub new {
 
     require Mojo::UserAgent;
 
-    my $self = bless {
-        engine                   => $args{engine} || Yggdrasil::Engine->new(),
-        polling_interval         => $polling_interval + 0,
-        fetch_features_interval  => $fetch_features_interval + 0,
-        send_metrics_interval    => $send_metrics_interval + 0,
-        unleash_url              => $unleash_url,
-        api_key                  => $api_key,
-        app_name                 => $app_name,
-        instance_id              => $instance_id,
-        connection_id            => _generate_uuid(),
-        state_backup_dir         => $state_backup_dir,
-        state_backup_file        => _build_state_backup_file($state_backup_dir, $app_name),
-        bootstrap_function       => $bootstrap_function,
-        custom_strategies        => $custom_strategies,
-        supported_strategies     => $supported_strategies,
-        features_url             => _build_features_url($unleash_url),
-        metrics_url              => _build_metrics_url($unleash_url),
-        register_url             => _build_register_url($unleash_url),
-        ua                       => $args{ua} || Mojo::UserAgent->new(),
-        etag                     => undef,
-        fetch_features_scheduler => undef,
-        send_metrics_scheduler   => undef,
-        fetch_features_task      => undef,
-        send_metrics_task        => undef,
-        register_task            => undef,
-        _fetch_in_flight         => 0,
-        _metrics_in_flight       => 0,
-        _register_in_flight      => 0,
-        _startup_hydration_started => 0,
-        _startup_winner          => undef,
-        poller_running           => 0,
-    }, $class;
+    my $self = $class->SUPER::new();
+    $self->{engine} = $args{engine} || Yggdrasil::Engine->new();
+    $self->{polling_interval} = $polling_interval + 0;
+    $self->{fetch_features_interval} = $fetch_features_interval + 0;
+    $self->{send_metrics_interval} = $send_metrics_interval + 0;
+    $self->{unleash_url} = $unleash_url;
+    $self->{api_key} = $api_key;
+    $self->{app_name} = $app_name;
+    $self->{instance_id} = $instance_id;
+    $self->{connection_id} = _generate_uuid();
+    $self->{state_backup_dir} = $state_backup_dir;
+    $self->{state_backup_file} = _build_state_backup_file($state_backup_dir, $app_name);
+    $self->{bootstrap_function} = $bootstrap_function;
+    $self->{custom_strategies} = $custom_strategies;
+    $self->{supported_strategies} = $supported_strategies;
+    $self->{features_url} = _build_features_url($unleash_url);
+    $self->{metrics_url} = _build_metrics_url($unleash_url);
+    $self->{register_url} = _build_register_url($unleash_url);
+    $self->{ua} = $args{ua} || Mojo::UserAgent->new();
+    $self->{etag} = undef;
+    $self->{fetch_features_scheduler} = undef;
+    $self->{send_metrics_scheduler} = undef;
+    $self->{fetch_features_task} = undef;
+    $self->{send_metrics_task} = undef;
+    $self->{register_task} = undef;
+    $self->{_fetch_in_flight} = 0;
+    $self->{_metrics_in_flight} = 0;
+    $self->{_register_in_flight} = 0;
+    $self->{_startup_hydration_started} = 0;
+    $self->{_startup_winner} = undef;
+    $self->{_ready_emitted} = 0;
+    $self->{poller_running} = 0;
 
     $self->{fetch_features_task} = Srv::SDK::FetchFeatures->new(sdk => $self);
     $self->{send_metrics_task} = Srv::SDK::SendMetrics->new(sdk => $self);
@@ -351,10 +352,7 @@ sub _start_startup_hydration {
 
         # HTTP wins if it is first, but also supersedes backup/bootstrap when they won first.
         $self->{_startup_winner} = 'http' if !defined $self->{_startup_winner};
-        $self->{etag} = $res->{etag} if defined $res->{etag} && $res->{etag} ne q{};
-
-        $self->{engine}->take_state("$state_json");
-        $self->_backup_state_json("$state_json");
+        $self->_handle_successful_fetch_state("$state_json", $res->{etag});
         $self->{_startup_winner} = 'http';
         return;
     })->catch(sub {
@@ -412,6 +410,25 @@ sub _build_features_url {
 
     $unleash_url =~ s{/$}{};
     return $unleash_url . '/client/features';
+}
+
+sub _handle_successful_fetch_state {
+    my ($self, $state_json, $etag) = @_;
+    return if !defined $state_json || $state_json eq q{};
+
+    $self->{etag} = $etag if defined $etag && $etag ne q{};
+    $self->{engine}->take_state("$state_json");
+    $self->_backup_state_json("$state_json");
+    $self->_emit_ready_once();
+    return;
+}
+
+sub _emit_ready_once {
+    my ($self) = @_;
+    return if $self->{_ready_emitted};
+    $self->{_ready_emitted} = 1;
+    $self->emit('ready');
+    return;
 }
 
 sub _is_enabled_raw {

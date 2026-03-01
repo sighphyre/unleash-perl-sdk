@@ -8,6 +8,7 @@ Library-first Perl scaffold.
 - `bin/basic_usage.pl`: minimal `is_enabled` example
 - `bin/variant_usage.pl`: minimal `get_variant` example
 - `bin/custom_strategy_usage.pl`: custom strategy registration example
+- `bin/ready_usage.pl`: wait for `ready` event before evaluating flags
 - `t/basic.t`: basic module test
 
 ## Run Examples
@@ -22,6 +23,10 @@ Library-first Perl scaffold.
 
 ```sh
 ./bin/custom_strategy_usage.pl
+```
+
+```sh
+./bin/ready_usage.pl
 ```
 
 ## Run Tests

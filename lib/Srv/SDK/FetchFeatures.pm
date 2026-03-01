@@ -38,12 +38,10 @@ sub run {
                     } elsif (!$result->is_success) {
                         warn "fetch_features request failed with status $status\n";
                     } else {
-                        my $new_etag = $result->headers->header('ETag');
-                        $sdk->{etag} = $new_etag if defined $new_etag && $new_etag ne q{};
                         my $state_json = $result->body;
                         $state_json = q{} if !defined $state_json;
-                        $sdk->{engine}->take_state("$state_json");
-                        $sdk->_backup_state_json("$state_json");
+                        my $new_etag = $result->headers->header('ETag');
+                        $sdk->_handle_successful_fetch_state("$state_json", $new_etag);
                     }
                     1;
                 } or do {

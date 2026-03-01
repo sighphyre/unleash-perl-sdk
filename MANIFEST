@@ -4,6 +4,7 @@ README.md
 bin/basic_usage.pl
 bin/variant_usage.pl
 bin/custom_strategy_usage.pl
+bin/ready_usage.pl
 lib/Srv/SDK.pm
 lib/Srv/Scheduler.pm
 lib/Srv/SDK/FetchFeatures.pm
