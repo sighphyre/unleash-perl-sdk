@@ -24,13 +24,25 @@ BEGIN {
 sub new {
     my ($class, %args) = @_;
 
+    my $unleash_url = $args{unleash_url};
+    die 'unleash_url is required' if !defined $unleash_url || $unleash_url eq q{};
+
+    my $api_key = $args{api_key};
+    die 'api_key is required' if !defined $api_key || $api_key eq q{};
+
     my $polling_interval = $args{polling_interval};
     $polling_interval = 15 if !defined $polling_interval;
     die 'polling_interval must be a positive number' if $polling_interval <= 0;
 
+    require Mojo::UserAgent;
+
     my $self = bless {
-        engine                  => Yggdrasil::Engine->new(),
-        polling_interval        => $polling_interval + 0,
+        engine                   => Yggdrasil::Engine->new(),
+        polling_interval         => $polling_interval + 0,
+        unleash_url              => $unleash_url,
+        api_key                  => $api_key,
+        features_url             => _build_features_url($unleash_url),
+        ua                       => $args{ua} || Mojo::UserAgent->new(),
         fetch_features_scheduler => undef,
         send_metrics_scheduler   => undef,
         _fetch_in_flight         => 0,
@@ -107,7 +119,22 @@ sub _fetch_features_once {
     return if $self->{_fetch_in_flight};
     $self->{_fetch_in_flight} = 1;
 
-    print "fetch_features\n";
+    eval {
+        my $tx = $self->{ua}->get(
+            $self->{features_url} => {
+                Authorization => $self->{api_key},
+            }
+        );
+
+        if (!$tx->result->is_success) {
+            my $status = $tx->result->code || 'unknown';
+            warn "fetch_features request failed with status $status\n";
+        }
+        1;
+    } or do {
+        my $err = $@ || 'unknown error';
+        warn "fetch_features request failed: $err";
+    };
 
     $self->{_fetch_in_flight} = 0;
     return;
@@ -124,6 +151,13 @@ sub _send_metrics_once {
     $self->{_metrics_in_flight} = 0;
 
     return;
+}
+
+sub _build_features_url {
+    my ($unleash_url) = @_;
+
+    $unleash_url =~ s{/$}{};
+    return $unleash_url . '/client/features';
 }
 
 1;

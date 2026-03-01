@@ -10,7 +10,14 @@ use Srv::SDK;
 
 $| = 1;
 
-my $sdk = Srv::SDK->new(polling_interval => 1);
+my $unleash_url = $ENV{UNLEASH_URL} || 'http://localhost:4242/api';
+my $api_key = $ENV{UNLEASH_API_KEY} || 'default:development.unleash-insecure-api-token';
+
+my $sdk = Srv::SDK->new(
+    polling_interval => 1,
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+);
 $sdk->initialize();
 
 Mojo::IOLoop->start;
