@@ -2,6 +2,7 @@ package Srv::SDK::FetchFeatures;
 
 use strict;
 use warnings;
+use Mojo::Promise;
 
 sub new {
     my ($class, %args) = @_;
@@ -62,6 +63,57 @@ sub run {
     };
 
     return;
+}
+
+sub fetch_state_p {
+    my ($self) = @_;
+    my $sdk = $self->{sdk};
+
+    my $p = Mojo::Promise->new;
+
+    eval {
+        my %headers = (
+            Authorization => $sdk->{api_key},
+        );
+        if (defined $sdk->{etag} && $sdk->{etag} ne q{}) {
+            $headers{'If-None-Match'} = $sdk->{etag};
+        }
+
+        $sdk->{ua}->get(
+            $sdk->{features_url} => \%headers => sub {
+                my ($ua, $tx) = @_;
+                eval {
+                    my $result = $tx->result;
+                    my $status = $result->code || 'unknown';
+
+                    if ($status == 304) {
+                        $p->resolve({ status => 304 });
+                    } elsif (!$result->is_success) {
+                        warn "fetch_features request failed with status $status\n";
+                        $p->resolve({ status => $status });
+                    } else {
+                        $p->resolve({
+                            status     => $status,
+                            state_json => $result->body,
+                            etag       => $result->headers->header('ETag'),
+                        });
+                    }
+                    1;
+                } or do {
+                    my $err = $@ || 'unknown error';
+                    warn "fetch_features request failed: $err";
+                    $p->resolve(undef);
+                };
+            }
+        );
+        1;
+    } or do {
+        my $err = $@ || 'unknown error';
+        warn "fetch_features request failed: $err";
+        $p->resolve(undef);
+    };
+
+    return $p;
 }
 
 1;

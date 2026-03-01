@@ -4,6 +4,7 @@ use warnings;
 use Test::More;
 use File::Spec;
 use File::Temp qw(tempdir);
+use Mojo::IOLoop;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 
@@ -181,32 +182,35 @@ open my $hydrated_fh, '>', $hydrated_backup_file or die "failed to seed hydratio
 print {$hydrated_fh} '{"version":2,"features":[{"name":"seeded"}],"segments":[]}';
 close $hydrated_fh;
 
+my $ua_hydrated = TestUA->new(
+    get_responses => [
+        { status => 304, body => q{}, etag => undef },
+    ],
+);
 my $engine_hydrated = TestEngine->new();
 my $sdk_hydrated = Srv::SDK->new(
-    unleash_url      => $unleash_url,
-    api_key          => $api_key,
-    app_name         => 'startup-hydrate-app',
-    state_backup_dir => $backup_dir,
+    unleash_url        => $unleash_url,
+    api_key            => $api_key,
+    app_name           => 'startup-hydrate-app',
+    state_backup_dir   => $backup_dir,
     bootstrap_function => sub {
         return '{"version":2,"features":[{"name":"bootstrapped"}],"segments":[]}';
     },
-    ua               => $ua,
-    engine           => $engine_hydrated,
+    ua                 => $ua_hydrated,
+    engine             => $engine_hydrated,
 );
+$sdk_hydrated->_start_startup_hydration();
+Mojo::IOLoop->one_tick();
+Mojo::IOLoop->one_tick();
 is(
     scalar @{ $engine_hydrated->{take_state_calls} },
-    2,
-    'constructor hydrates from backup and bootstrap function',
+    1,
+    'startup hydration uses first successful source',
 );
 is(
     $engine_hydrated->{take_state_calls}[0],
-    '{"version":2,"features":[{"name":"seeded"}],"segments":[]}',
-    'backup hydration runs first',
-);
-is(
-    $engine_hydrated->{take_state_calls}[1],
     '{"version":2,"features":[{"name":"bootstrapped"}],"segments":[]}',
-    'bootstrap hydration runs after backup',
+    'bootstrap can win startup race and hydrate engine',
 );
 
 my $sdk = Srv::SDK->new(
@@ -267,8 +271,15 @@ my $polling_sdk = Srv::SDK->new(
     api_key          => $api_key,
     app_name         => 'polling-test-app',
     state_backup_dir => $backup_dir,
-    ua               => $ua,
-    engine           => $engine,
+    ua               => TestUA->new(
+        get_responses => [
+            { status => 304, body => q{}, etag => undef },
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine           => TestEngine->new(),
 );
 my $timers = $polling_sdk->initialize();
 ok(ref($timers) eq 'HASH', 'initialize returns scheduler timer ids');
@@ -284,8 +295,15 @@ my $disabled_polling_sdk = Srv::SDK->new(
     api_key                 => $api_key,
     app_name                => 'disabled-polling-test-app',
     state_backup_dir        => $backup_dir,
-    ua                      => $ua,
-    engine                  => $engine,
+    ua                      => TestUA->new(
+        get_responses => [
+            { status => 304, body => q{}, etag => undef },
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine                  => TestEngine->new(),
 );
 my $disabled_timers = $disabled_polling_sdk->initialize();
 ok(ref($disabled_timers) eq 'HASH', 'initialize returns timer hash when polls are disabled');
