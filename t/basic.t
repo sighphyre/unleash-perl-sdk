@@ -118,7 +118,9 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
             take_state_calls => [],
             metrics_values   => $args{metrics_values} || [],
             enabled_values   => $args{enabled_values} || [],
+            variant_values   => $args{variant_values} || [],
             count_calls      => [],
+            count_variant_calls => [],
         }, $class;
     }
     sub is_enabled {
@@ -134,11 +136,23 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
         my ($self) = @_;
         return shift @{ $self->{metrics_values} };
     }
+    sub get_variant {
+        my ($self) = @_;
+        return shift @{ $self->{variant_values} };
+    }
     sub count_toggle {
         my ($self, $toggle_name, $enabled) = @_;
         push @{ $self->{count_calls} }, {
             toggle_name => $toggle_name,
             enabled     => $enabled,
+        };
+        return;
+    }
+    sub count_variant {
+        my ($self, $toggle_name, $variant_name) = @_;
+        push @{ $self->{count_variant_calls} }, {
+            toggle_name  => $toggle_name,
+            variant_name => $variant_name,
         };
         return;
     }
@@ -264,6 +278,73 @@ is($engine_counting->{count_calls}[0]{toggle_name}, 'flag_on', 'count_toggle cal
 is($engine_counting->{count_calls}[0]{enabled}, 1, 'count_toggle enabled=1 for true result');
 is($engine_counting->{count_calls}[1]{toggle_name}, 'flag_off', 'count_toggle called with second toggle name');
 is($engine_counting->{count_calls}[1]{enabled}, 0, 'count_toggle enabled=0 for false result');
+
+my $engine_variant = TestEngine->new(
+    variant_values => [
+        { name => 'green', payload => undef, enabled => 1, featureEnabled => 1 },
+        undef,
+        undef,
+        undef,
+    ],
+    enabled_values => [
+        1,
+        undef,
+        0,
+    ],
+);
+my $sdk_variant = Srv::SDK->new(
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'variant-test-app',
+    state_backup_dir => $backup_dir,
+    ua               => TestUA->new(
+        get_responses => [
+            { status => 304, body => q{}, etag => undef },
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine           => $engine_variant,
+);
+
+my $existing_variant = $sdk_variant->get_variant('variant_flag', {}, sub { { name => 'unused' } });
+is($existing_variant->{name}, 'green', 'get_variant returns engine variant when present');
+is(scalar @{ $engine_variant->{count_calls} }, 1, 'existing variant increments count_toggle');
+is($engine_variant->{count_calls}[0]{enabled}, 1, 'existing variant count_toggle uses feature enabled state');
+is(scalar @{ $engine_variant->{count_variant_calls} }, 1, 'existing variant increments count_variant');
+is($engine_variant->{count_variant_calls}[0]{variant_name}, 'green', 'existing variant count_variant uses variant name');
+
+my $fallback_variant_enabled = $sdk_variant->get_variant(
+    'missing_variant_enabled',
+    {},
+    sub { { name => 'from-fallback', payload => undef, enabled => 1, featureEnabled => 1 } }
+);
+is($fallback_variant_enabled->{name}, 'from-fallback', 'fallback variant returned when engine variant missing');
+is(scalar @{ $engine_variant->{count_calls} }, 2, 'fallback path counts toggle when toggle exists');
+is($engine_variant->{count_calls}[1]{enabled}, 1, 'fallback path count_toggle uses is_enabled state');
+is(scalar @{ $engine_variant->{count_variant_calls} }, 2, 'fallback path counts variant');
+is($engine_variant->{count_variant_calls}[1]{variant_name}, 'from-fallback', 'fallback path uses fallback variant name');
+
+my $fallback_variant_missing = $sdk_variant->get_variant(
+    'missing_variant_toggle_missing',
+    {},
+    sub { { name => 'missing-toggle-fallback', payload => undef, enabled => 0, featureEnabled => 0 } }
+);
+is($fallback_variant_missing->{name}, 'missing-toggle-fallback', 'fallback still returned when toggle missing');
+is(scalar @{ $engine_variant->{count_calls} }, 2, 'toggle count not incremented when is_enabled is undef');
+is(scalar @{ $engine_variant->{count_variant_calls} }, 3, 'variant count increments when toggle missing');
+is($engine_variant->{count_variant_calls}[2]{variant_name}, 'missing-toggle-fallback', 'missing toggle still counts fallback variant name');
+
+my $default_variant = $sdk_variant->get_variant('missing_variant_default', {});
+is($default_variant->{name}, 'disabled', 'default fallback variant name is disabled');
+ok(!defined $default_variant->{payload}, 'default fallback payload is null/undef');
+is($default_variant->{enabled}, 0, 'default fallback enabled is false');
+is($default_variant->{featureEnabled}, 0, 'default fallback featureEnabled mirrors is_enabled');
+is(scalar @{ $engine_variant->{count_calls} }, 3, 'default fallback counts toggle when is_enabled is defined');
+is($engine_variant->{count_calls}[2]{enabled}, 0, 'default fallback count_toggle uses is_enabled state');
+is(scalar @{ $engine_variant->{count_variant_calls} }, 4, 'default fallback counts variant');
+is($engine_variant->{count_variant_calls}[3]{variant_name}, 'disabled', 'default fallback variant name counted as disabled');
 
 my $polling_sdk = Srv::SDK->new(
     polling_interval => 1,

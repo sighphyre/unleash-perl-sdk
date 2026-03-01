@@ -1,6 +1,7 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
+use JSON::PP qw(encode_json);
 
 use FindBin;
 use lib "$FindBin::Bin/../lib";
@@ -34,7 +35,24 @@ $sdk->initialize();
 Mojo::IOLoop->recurring(
     $eval_interval => sub {
         my $enabled = $sdk->is_enabled($toggle_name, { userId => 1 }, sub { 0 });
+        my $variant = $sdk->get_variant($toggle_name, { userId => 1 });
+        my $variant_name = (ref($variant) eq 'HASH' && defined $variant->{name})
+            ? $variant->{name}
+            : 'unknown';
+        my $variant_feature_enabled = (ref($variant) eq 'HASH' && exists $variant->{featureEnabled})
+            ? ($variant->{featureEnabled} ? 'true' : 'false')
+            : 'false';
+        my $variant_enabled = (ref($variant) eq 'HASH' && exists $variant->{enabled})
+            ? ($variant->{enabled} ? 'true' : 'false')
+            : 'false';
+        my $variant_payload = (ref($variant) eq 'HASH' && exists $variant->{payload})
+            ? encode_json($variant->{payload})
+            : 'null';
         print "is_enabled($toggle_name) = ", ($enabled ? 'true' : 'false'), "\n";
+        print "get_variant($toggle_name) = $variant_name",
+            " featureEnabled=$variant_feature_enabled",
+            " enabled=$variant_enabled",
+            " payload=$variant_payload\n";
     }
 );
 

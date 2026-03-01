@@ -127,7 +127,7 @@ sub is_enabled {
     die 'toggle_name is required' if !defined $toggle_name || $toggle_name eq q{};
     die 'fallback must be a coderef' if defined $fallback && ref($fallback) ne 'CODE';
 
-    my $enabled = $self->{engine}->is_enabled($toggle_name, $context || {});
+    my $enabled = $self->_is_enabled_raw($toggle_name, $context);
 
     if (!defined $enabled) {
         return $fallback ? ($fallback->() ? 1 : 0) : 0;
@@ -137,6 +137,42 @@ sub is_enabled {
     $self->{engine}->count_toggle($toggle_name, $enabled_bool);
 
     return $enabled_bool;
+}
+
+sub get_variant {
+    my ($self, $toggle_name, $context, $fallback) = @_;
+
+    die 'toggle_name is required' if !defined $toggle_name || $toggle_name eq q{};
+    die 'fallback must be a coderef' if defined $fallback && ref($fallback) ne 'CODE';
+
+    my $variant = $self->{engine}->get_variant($toggle_name, $context || {});
+
+    if (defined $variant) {
+        my $feature_enabled = _variant_feature_enabled($variant);
+        my $variant_name = _variant_name($variant);
+        $self->{engine}->count_toggle($toggle_name, $feature_enabled);
+        $self->{engine}->count_variant($toggle_name, $variant_name);
+        return $variant;
+    }
+
+    my $enabled = $self->_is_enabled_raw($toggle_name, $context);
+    my $feature_enabled = defined $enabled ? ($enabled ? 1 : 0) : 0;
+    my $resolved_variant = $fallback
+        ? $fallback->()
+        : {
+            name           => 'disabled',
+            payload        => undef,
+            enabled        => 0,
+            featureEnabled => $feature_enabled,
+        };
+
+    my $variant_name = _variant_name($resolved_variant);
+    if (defined $enabled) {
+        $self->{engine}->count_toggle($toggle_name, $feature_enabled);
+    }
+    $self->{engine}->count_variant($toggle_name, $variant_name);
+
+    return $resolved_variant;
 }
 
 sub initialize {
@@ -370,6 +406,37 @@ sub _build_features_url {
 
     $unleash_url =~ s{/$}{};
     return $unleash_url . '/client/features';
+}
+
+sub _is_enabled_raw {
+    my ($self, $toggle_name, $context) = @_;
+    return $self->{engine}->is_enabled($toggle_name, $context || {});
+}
+
+sub _variant_name {
+    my ($variant) = @_;
+
+    if (ref($variant) eq 'HASH' && defined $variant->{name} && $variant->{name} ne q{}) {
+        return $variant->{name};
+    }
+
+    return 'disabled';
+}
+
+sub _variant_feature_enabled {
+    my ($variant) = @_;
+
+    return 0 if ref($variant) ne 'HASH';
+    if (exists $variant->{featureEnabled}) {
+        return $variant->{featureEnabled} ? 1 : 0;
+    }
+    if (exists $variant->{feature_enabled}) {
+        return $variant->{feature_enabled} ? 1 : 0;
+    }
+    if (exists $variant->{enabled}) {
+        return $variant->{enabled} ? 1 : 0;
+    }
+    return 0;
 }
 
 1;
