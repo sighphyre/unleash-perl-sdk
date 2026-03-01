@@ -1,0 +1,37 @@
+# Perl build artifacts
+/blib/
+/_build/
+/Build
+/Build.bat
+/Makefile
+/Makefile.old
+/pm_to_blib
+
+# ExtUtils::MakeMaker / CPAN metadata
+/MYMETA.json
+/MYMETA.yml
+/META.json
+/META.yml
+
+# Distribution artifacts
+/*.tar.gz
+/*.zip
+
+# Test and coverage outputs
+/cover_db/
+/nytprof.out
+/nytprof/
+/junit*.xml
+
+# Local dependency installs
+/.local/
+/local/
+/local-lib/
+/fatlib/
+
+# Editor/OS noise
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
