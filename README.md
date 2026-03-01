@@ -20,6 +20,12 @@ Library-first Perl scaffold.
 prove -I lib t
 ```
 
+For spec testing, clone the Unleash client specification repo into this project root:
+
+```sh
+git clone git@github.com:Unleash/client-specification.git
+```
+
 ## Install The Library
 
 ### Option 1: ExtUtils::MakeMaker (classic)

@@ -22,6 +22,7 @@
 /nytprof.out
 /nytprof/
 /junit*.xml
+/client-specification/
 
 # Local dependency installs
 /.local/
