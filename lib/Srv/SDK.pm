@@ -136,14 +136,21 @@ sub is_enabled {
 
     my $enabled = $self->_is_enabled_raw($toggle_name, $context);
 
+    my $resolved_enabled;
     if (!defined $enabled) {
-        return $fallback ? ($fallback->() ? 1 : 0) : 0;
+        $resolved_enabled = $fallback ? ($fallback->() ? 1 : 0) : 0;
+    } else {
+        $resolved_enabled = $enabled ? 1 : 0;
+        $self->{engine}->count_toggle($toggle_name, $resolved_enabled);
     }
 
-    my $enabled_bool = $enabled ? 1 : 0;
-    $self->{engine}->count_toggle($toggle_name, $enabled_bool);
+    $self->_emit_impression_event(
+        feature_name => $toggle_name,
+        context      => $context || {},
+        enabled      => $resolved_enabled,
+    );
 
-    return $enabled_bool;
+    return $resolved_enabled;
 }
 
 sub get_variant {
@@ -159,6 +166,12 @@ sub get_variant {
         my $variant_name = _variant_name($variant);
         $self->{engine}->count_toggle($toggle_name, $feature_enabled);
         $self->{engine}->count_variant($toggle_name, $variant_name);
+        $self->_emit_impression_event(
+            feature_name => $toggle_name,
+            context      => $context || {},
+            enabled      => $feature_enabled,
+            variant      => $variant_name,
+        );
         return $variant;
     }
 
@@ -178,6 +191,12 @@ sub get_variant {
         $self->{engine}->count_toggle($toggle_name, $feature_enabled);
     }
     $self->{engine}->count_variant($toggle_name, $variant_name);
+    $self->_emit_impression_event(
+        feature_name => $toggle_name,
+        context      => $context || {},
+        enabled      => $feature_enabled,
+        variant      => $variant_name,
+    );
 
     return $resolved_variant;
 }
@@ -447,6 +466,32 @@ sub _emit_error {
     $message = 'unknown fetch error' if !defined $message || $message eq q{};
     warn "$message\n";
     $self->emit('error', $message) if $self->can('has_subscribers') && $self->has_subscribers('error');
+    return;
+}
+
+sub _emit_impression_event {
+    my ($self, %args) = @_;
+
+    my $feature_name = $args{feature_name};
+    return if !defined $feature_name || $feature_name eq q{};
+
+    my $should_emit = 0;
+    eval {
+        $should_emit = $self->{engine}->should_emit_impression_event($feature_name) ? 1 : 0;
+        1;
+    } or do {
+        return;
+    };
+    return if !$should_emit;
+
+    my %event = (
+        featureName => $feature_name,
+        context     => $args{context} || {},
+        enabled     => $args{enabled} ? 1 : 0,
+    );
+    $event{variant} = $args{variant} if defined $args{variant};
+
+    $self->emit('impression', \%event);
     return;
 }
 

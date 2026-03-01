@@ -128,6 +128,7 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
             metrics_values   => $args{metrics_values} || [],
             enabled_values   => $args{enabled_values} || [],
             variant_values   => $args{variant_values} || [],
+            should_emit_map  => $args{should_emit_map} || {},
             count_calls      => [],
             count_variant_calls => [],
             registered_custom_strategies => [],
@@ -170,6 +171,10 @@ my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';
         my ($self, $strategies) = @_;
         push @{ $self->{registered_custom_strategies} }, $strategies;
         return;
+    }
+    sub should_emit_impression_event {
+        my ($self, $toggle_name) = @_;
+        return $self->{should_emit_map}{$toggle_name} ? 1 : 0;
     }
 }
 
@@ -506,6 +511,70 @@ is($ready_late_count, 1, 'ready emitted on subsequent successful HTTP fetch');
 $sdk_ready_late->_fetch_features_once();
 is($ready_late_count, 1, 'ready emitted only once');
 $sdk_ready_late->shutdown();
+
+my $engine_impression = TestEngine->new(
+    enabled_values => [
+        1, # is_enabled -> emit
+        0, # is_enabled -> no emit
+        0, # get_variant fallback path -> is_enabled
+    ],
+    variant_values => [
+        { name => 'blue', enabled => 1, featureEnabled => 1 },
+        undef,
+    ],
+    should_emit_map => {
+        impression_enabled          => 1,
+        impression_variant          => 1,
+        impression_fallback_variant => 1,
+        impression_no_emit          => 0,
+    },
+);
+my $sdk_impression = Srv::SDK->new(
+    unleash_url      => $unleash_url,
+    api_key          => $api_key,
+    app_name         => 'impression-test-app',
+    state_backup_dir => $backup_dir,
+    fetch_features_interval => 0,
+    send_metrics_interval   => 0,
+    ua               => TestUA->new(
+        get_responses => [
+            { status => 304, body => q{}, etag => undef },
+        ],
+        post_responses => [
+            { status => 202, body => q{}, etag => undef },
+        ],
+    ),
+    engine           => $engine_impression,
+);
+my @impressions;
+$sdk_impression->on(impression => sub {
+    my ($sdk, $payload) = @_;
+    push @impressions, $payload;
+});
+
+$sdk_impression->is_enabled('impression_enabled', { userId => 123 });
+$sdk_impression->get_variant('impression_variant', { sessionId => 'abc' });
+$sdk_impression->get_variant(
+    'impression_fallback_variant',
+    { userId => 999 },
+    sub { { name => 'fallback-red', enabled => 0, featureEnabled => 0 } },
+);
+$sdk_impression->is_enabled('impression_no_emit', { userId => 321 });
+
+is(scalar @impressions, 3, 'impression event emitted only when should_emit_impression_event is true');
+is($impressions[0]{featureName}, 'impression_enabled', 'is_enabled impression includes feature name');
+is_deeply($impressions[0]{context}, { userId => 123 }, 'is_enabled impression includes context');
+is($impressions[0]{enabled}, 1, 'is_enabled impression includes enabled state');
+ok(!exists $impressions[0]{variant}, 'is_enabled impression does not include variant');
+
+is($impressions[1]{featureName}, 'impression_variant', 'get_variant impression includes feature name');
+is($impressions[1]{enabled}, 1, 'get_variant impression includes enabled state');
+is($impressions[1]{variant}, 'blue', 'get_variant impression includes variant name');
+
+is($impressions[2]{featureName}, 'impression_fallback_variant', 'fallback get_variant impression includes feature name');
+is($impressions[2]{enabled}, 0, 'fallback get_variant impression includes enabled state');
+is($impressions[2]{variant}, 'fallback-red', 'fallback get_variant impression includes fallback variant name');
+$sdk_impression->shutdown();
 
 my $engine_error_startup = TestEngine->new();
 my $sdk_error_startup = Srv::SDK->new(
