@@ -86,6 +86,7 @@ sub initialize {
 
     my $fetch_timer_id = $self->{fetch_features_scheduler}->start();
     my $metrics_timer_id = $self->{send_metrics_scheduler}->start();
+    Mojo::IOLoop->next_tick(sub { $self->_fetch_features_once() });
 
     $self->{poller_running} = 1;
     return {
