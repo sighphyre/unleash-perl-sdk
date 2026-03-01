@@ -5,13 +5,23 @@ Library-first Perl scaffold.
 ## Layout
 
 - `lib/Srv/SDK.pm`: library module
-- `bin/hello.pl`: tiny runnable example using the library
+- `bin/basic_usage.pl`: minimal `is_enabled` example
+- `bin/variant_usage.pl`: minimal `get_variant` example
+- `bin/custom_strategy_usage.pl`: custom strategy registration example
 - `t/basic.t`: basic module test
 
-## Run Example
+## Run Examples
 
 ```sh
-./bin/hello.pl
+./bin/basic_usage.pl
+```
+
+```sh
+./bin/variant_usage.pl
+```
+
+```sh
+./bin/custom_strategy_usage.pl
 ```
 
 ## Run Tests
