@@ -33,6 +33,14 @@ sub new {
     my $polling_interval = $args{polling_interval};
     $polling_interval = 15 if !defined $polling_interval;
     die 'polling_interval must be a positive number' if $polling_interval <= 0;
+
+    my $fetch_features_interval = $args{fetch_features_interval};
+    $fetch_features_interval = $polling_interval if !defined $fetch_features_interval;
+    die 'fetch_features_interval must be a positive number' if $fetch_features_interval <= 0;
+
+    my $send_metrics_interval = $args{send_metrics_interval};
+    $send_metrics_interval = $polling_interval if !defined $send_metrics_interval;
+    die 'send_metrics_interval must be a positive number' if $send_metrics_interval <= 0;
     my $app_name = $args{app_name};
     $app_name = 'unleash-perl-app' if !defined $app_name || $app_name eq q{};
     my $instance_id = $args{instance_id};
@@ -43,6 +51,8 @@ sub new {
     my $self = bless {
         engine                   => $args{engine} || Yggdrasil::Engine->new(),
         polling_interval         => $polling_interval + 0,
+        fetch_features_interval  => $fetch_features_interval + 0,
+        send_metrics_interval    => $send_metrics_interval + 0,
         unleash_url              => $unleash_url,
         api_key                  => $api_key,
         app_name                 => $app_name,
@@ -61,12 +71,12 @@ sub new {
 
     $self->{fetch_features_scheduler} = Srv::Scheduler->new(
         name     => 'fetch_features',
-        interval => $self->{polling_interval},
+        interval => $self->{fetch_features_interval},
         task     => sub { $self->_fetch_features_once() },
     );
     $self->{send_metrics_scheduler} = Srv::Scheduler->new(
         name     => 'send_metrics',
-        interval => $self->{polling_interval},
+        interval => $self->{send_metrics_interval},
         task     => sub { $self->_send_metrics_once() },
     );
 
