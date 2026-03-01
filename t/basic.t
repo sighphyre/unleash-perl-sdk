@@ -4,11 +4,20 @@ use warnings;
 use Test::More;
 use File::Spec;
 use File::Temp qw(tempdir);
-use Mojo::IOLoop;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 
-use Srv::SDK;
+my $has_mojo = eval {
+    require Mojo::Promise;
+    require Mojo::IOLoop;
+    1;
+};
+if (!$has_mojo) {
+    plan skip_all => "Mojolicious is required for SDK tests";
+}
+
+require Srv::SDK;
+Srv::SDK->import();
 
 my $unleash_url = $ENV{UNLEASH_URL} || 'http://localhost:4242/api';
 my $api_key = $ENV{UNLEASH_API_KEY} || 'test-api-key';

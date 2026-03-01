@@ -8,3 +8,4 @@ lib/Srv/SDK/FetchFeatures.pm
 lib/Srv/SDK/SendMetrics.pm
 lib/Srv/SDK/Register.pm
 t/basic.t
+t/specification.t

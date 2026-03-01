@@ -20,6 +20,19 @@ Library-first Perl scaffold.
 prove -I lib t
 ```
 
+If dependencies are installed into local `.local`, run tests with:
+
+```sh
+PERL5LIB="$PWD/.local/lib/perl5:$PERL5LIB" prove -I lib t
+```
+
+If you installed a local Yggdrasil package (for example via `cpanm -L /tmp/yggdrasil-perl-local ...`),
+prepend that path too:
+
+```sh
+PERL5LIB="/tmp/yggdrasil-perl-local/lib/perl5:$PWD/.local/lib/perl5:$PERL5LIB" prove -I lib t
+```
+
 For spec testing, clone the Unleash client specification repo into this project root:
 
 ```sh
