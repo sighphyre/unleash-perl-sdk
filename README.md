@@ -40,9 +40,8 @@ Create the SDK with `Srv::SDK->new(%args)`.
 | `api_key` | yes | - | Backend token sent as `Authorization` header. |
 | `app_name` | no | `unleash-perl-app` | Included in register/metrics payloads and backup filename. |
 | `instance_id` | no | generated UUID | Stable ID for this SDK process instance. |
-| `polling_interval` | no | `15` | Legacy shared poll interval used when specific intervals are omitted. Must be `> 0`. |
-| `fetch_features_interval` | no | `polling_interval` | Feature fetch interval in seconds. `0` disables feature polling scheduler. |
-| `send_metrics_interval` | no | `polling_interval` | Metrics send interval in seconds. `0` disables metrics scheduler. |
+| `fetch_features_interval` | no | `15` | Feature fetch interval in seconds. `0` disables feature polling scheduler. |
+| `send_metrics_interval` | no | `60` | Metrics send interval in seconds. `0` disables metrics scheduler. |
 | `state_backup_dir` | no | `/tmp` | Directory for local state backup file `{app_name}-perl-sdk.json`. |
 | `bootstrap_function` | no | `undef` | Coderef returning JSON string in `/client/features` format. |
 | `custom_strategies` | no | `{}` | Hashref of strategy name => coderef. |

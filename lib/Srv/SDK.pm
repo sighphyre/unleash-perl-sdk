@@ -42,16 +42,12 @@ sub new {
     die 'api_key is required' if !defined $api_key || $api_key eq q{};
     die 'connection_id cannot be set by caller' if exists $args{connection_id};
 
-    my $polling_interval = $args{polling_interval};
-    $polling_interval = 15 if !defined $polling_interval;
-    die 'polling_interval must be a positive number' if $polling_interval <= 0;
-
     my $fetch_features_interval = $args{fetch_features_interval};
-    $fetch_features_interval = $polling_interval if !defined $fetch_features_interval;
+    $fetch_features_interval = 15 if !defined $fetch_features_interval;
     die 'fetch_features_interval must be a non-negative number' if $fetch_features_interval < 0;
 
     my $send_metrics_interval = $args{send_metrics_interval};
-    $send_metrics_interval = $polling_interval if !defined $send_metrics_interval;
+    $send_metrics_interval = 60 if !defined $send_metrics_interval;
     die 'send_metrics_interval must be a non-negative number' if $send_metrics_interval < 0;
     my $app_name = $args{app_name};
     $app_name = 'unleash-perl-app' if !defined $app_name || $app_name eq q{};
@@ -78,7 +74,6 @@ sub new {
 
     my $self = $class->SUPER::new();
     $self->{engine} = $args{engine} || Yggdrasil::Engine->new();
-    $self->{polling_interval} = $polling_interval + 0;
     $self->{fetch_features_interval} = $fetch_features_interval + 0;
     $self->{send_metrics_interval} = $send_metrics_interval + 0;
     $self->{unleash_url} = $unleash_url;
